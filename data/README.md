@@ -1,2 +1,2 @@
-Here lives the data, ready for analysis:
+Here lives the data, ready for analysis and stored as .RDS objects so that factor formatting remains (whereas a csv would require re-tidying):
 Samples from the November GAP1 cohort with both NanoString AND Methylation analyses from the UCD collaborators.
