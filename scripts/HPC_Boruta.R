@@ -20,14 +20,14 @@ RNGversion("3.5.3")
 set.seed(2903)
 
 #Define the number of resamples wanted:
-n_resamples <- 3
+n_resamples <- 1000
 #Set the parallelisation options:
 plan(multisession)
 
 ################ Import data, set variables ################
 ## Read in the ExoMeth dataset and the ExoMeth metastatic dataframes:
-ExoMeth_Cohort <- readRDS(here("data", "ExoMeth_Cohort.RDS"))
-MetsSamples    <- readRDS(here("data", "ExoMeth_Mets.RDS"))
+ExoMeth_Cohort <- readRDS(here("ExoMeth", "data", "ExoMeth_Cohort.RDS"))
+MetsSamples    <- readRDS(here("ExoMeth", "data", "ExoMeth_Mets.RDS"))
 
 ## Define the different groups of dataframe variables needed for analysis:
 #Methylation:
@@ -110,4 +110,4 @@ ResampledBoruta <-
   set_names(c("SoC", "Methylation", "ExoRNA", "ExoMeth"))
 
 #Save the results to an RDS for local work:
-saveRDS(ResampledBoruta, here("output/data_out/ResampledBoruta.RDS"))
+saveRDS(ResampledBoruta, here("ExoMeth/output/data_out/ResampledBoruta.RDS"))
