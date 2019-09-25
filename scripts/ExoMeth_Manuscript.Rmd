@@ -11,7 +11,13 @@ output:
 link-citations: yes
 csl: vancouver.csl
 ---
-```{r Base setup, include=FALSE}
+```{r Base setup, include=FALSE, message=FALSE}
+# Always set the random seed, even if you don't think you need it (this work definitely does!). Please note that these analyses were originally 
+# performed in R Version 3.5.3 and a change was made to the sampling function in 3.6, making these results no longer
+# quantitatively reproducible. So I have added a catch to "reset" the RNG to the "old" rounding version if this 
+# is knitted in >3.5.3
+RNGversion("3.5.3")
+set.seed(2903)
 #knitr setup
 knitr::opts_chunk$set(echo = FALSE, 
                       include = TRUE,
@@ -21,15 +27,14 @@ knitr::opts_chunk$set(echo = FALSE,
                       dpi = 450)
 ######## LOAD LIBRARIES AND SET PARAMETERS ######## 
 #Cleaning and munging:
-library(readxl)
 library(tidyverse)
 library(magrittr)
 library(lubridate)
+library(here)
 
 #Modelling:
 library(Boruta)
 library(randomForest)
-library(glmnet)
 library(caret)
 library(tidymodels)
 
@@ -45,12 +50,13 @@ library(qwraps2)
 library(ggpubr)
 library(ggsci)
 library(dabestr)
-library(UpSetR)
 library(cowplot)
 
-#Settings and stuff:
+#Settings for tables to at least be printed in the .doc:
 options(qwraps2_markup = "markdown")
+#Set the parallelisation options:
 plan(multisession)
+#Set the default ggplot theme:
 theme_set(theme_cowplot())
 #'Custom' colours for the plots:
 D3Red <- "#D62728FF"
@@ -59,26 +65,26 @@ D3Blue <- "#1F77B4FF"
 D3Green <- "#2CA02CFF"
 D3Purp <- "#9467BDFF"
 
-# Always got to set that seed:
-set.seed(2903)
+#### Data loading and defining variable sets ####
+## Read in the ExoMeth dataset and the ExoMeth metastatic dataframes:
+ExoMeth_Cohort <- read_csv(here("data", "ExoMeth_Cohort.csv"))
+MetsSamples    <- read_csv(here("data", "ExoMeth_Mets.csv"))
 
-#Set somne parameters that can be tweaked if necessary:
-PSA_cutoff <- 100
-Time_cutoff <- 39 #Number of weeks
-
-#### Read in the ExoMeth dataset and the ExoMeth metastatic dataframes:
-ExoMeth_Cohort <- read_csv("data/ExoMeth_Cohort.csv")
-MetsSamples <- read_csv("data/ExoMeth_Mets.csv")
-
-#Define the probes used by each lab and the clinical variables used:
+## Define the different groups of dataframe variables needed for analysis:
+#Methylation:
 MethProbes <- c("mGSTP1", "mAPC", "mSFRP2", "mIGFBP3", "mIGFBP7", "mPTGS2")
+
+#Clinical Variables:
 clin_vars <- c("PSA", "UrineVol", "DRESize", "Age")
-NanoGenes <- NanoString %>% 
-      select(-Sample_ID) %>% 
-      colnames
-#Also define some of the outcomes assessed in the paper (see data dictionary):
+
+#The outcomes assessed later on (see data dictionary for formal definition):
 outcomes <- c("Cat", "TriSig", "GleaSig", "LowGSig", "ClinSig", 
-              "is_C", "is_HC", "PercentCores")
+              "is_C")
+
+#The NanoString variables (lazily from the ExoMeth dataframe)
+NanoGenes <- ExoMeth_Cohort %>% 
+      select(-Sample_ID, -clin_vars, -outcomes, -MethProbes, -Gleason) %>% 
+      colnames
 ```
 
 # Introduction
