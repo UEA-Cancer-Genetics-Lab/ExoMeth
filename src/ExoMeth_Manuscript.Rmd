@@ -29,13 +29,11 @@ knitr::opts_chunk$set(echo = FALSE,
 #Cleaning and munging:
 library(tidyverse)
 library(magrittr)
-library(lubridate)
 library(here)
 
 #Modelling:
 library(Boruta)
 library(randomForest)
-library(caret)
 library(tidymodels)
 
 #Computation
@@ -89,14 +87,7 @@ NanoGenes <- ExoMeth_Cohort %>%
 
 # Introduction
 
-Prostate cancer exhibits extreme clinical heterogeneity; 10-year survival rates following diagnosis approach 84%, yet prostate cancer is still responsible for 13% of all cancer deaths in men in the UK [@CancerResearchUK2019]. Coupled with the high rates of diagnosis, prostate cancer is more often a disease that men die with rather than from. This illustrates the need for clinically implementable tools able to selectively identify those men that can be safely removed from treatment pathways without missing those men harbouring disease that requires intervention.
-
-An opportune point to intervene or supplement current clinical practices would be prior to an initial biopsy in men suspected of having prostate cancer, reducing costs to men, healthcare systems and providers alike. In current clinical practice men are selected for further investigations for prostate cancer if they have an  elevated PSA (≥4 ng/mL) and an adverse finding on digital rectal examination (DRE) or lower urinary tract symptoms; other factors such as age and ethnicity are also considered [@Sanda2018;@Cornford2017;@NICE2019]. However, the rates of negative biopsies in men with a clinical suspicion of prostate cancer are overwhelming; a recent population-level study of 419,582 men from Martin *et al* observed that 60% of all biopsies in the control arm of the Cluster Randomized Trial of PSA Testing for Prostate Cancer (CAP) were negative for prostate cancer [@Martin2018], similar to the rates observed by Donovan *et al* as part of the ProtecT trial [@Donovan2016]. Needle biopsy is invasive, and not without complications: 44% of patients report pain, and detection of clinically insignificant disease can result in years of monitoring, causing patients undue stress [@NICE2019]. Multiparametric MRI (MP-MRI) has been developed as a triage tool to reduce the rates of negative biopsy and its use has become increasingly widespread since its validation [@Ahmed2017]. However, MP-MRI is relatively expensive and has shown a high rate of inter-operator and inter-machine variability, leading to mpMRI missing up to 28% of clinically significant diseases in practice [@NICE2019;@Pepe2015;@Sonn2018;@Walz2018a].
-
-The interconnected nature of the male urological system makes it an ideal candidate for liquid biopsy and non-invasive biomarkers for prostate cancer. There is sizeable interest in the development of such non-invasive tests and classifiers capable of reducing the rates of initial biopsy in men, whilst retaining the sensitivity to detect aggressive disease. Single-gene or expression panels of few genes, such as the PCA3  [@Hessels2003], SelectMDx [@VanNeste2016], ExoDx Prostate(IntelliScore) [@McKiernan2016b] ) tests have published promising results to date for the non-invasive detection of significant disease (Gleason score (Gs) ≥7). Similarly, several urine methylation panels have been developed; the ProCUrE assay from Zhao *et al* quantifies the methylation of HOXD4 and GSTP1 for the detection of CAPRA score 3 – 10 disease [@Zhao2018], whilst Brikun *et al* assessed the binary presence/absence of CpG island methylation associated with 18 genes to predict the presence of any prostate cancer on biopsy [@Brikun]. However, these biomarker panels have yet to be widely implemented in clinical settings, and none are currently recommended within the NICE guidelines [@NICE2019], suggesting that improvements are required. Other studies have aimed to detect the most aggressive cancers  by utilising tissue samples taken at the time of biopsy, resulting in moderate success and wider clinical adoption [@Luca2017;@Knezevic2013a;@Cuzick2012a]. However, due to their proposed implementation within current clinical pathways, these tests may not take into consideration the considerable economic, psychological and societal costs of unnecessarily subjecting men with low volume, indolent disease to biopsy [@Eklund2016;@Tosoian2016;@Loeb2014].
-
-In 2012, the Movember Global Action Plan 1 (GAP1) initiative was launched, a collaborative effort between multiple institutes focusing on prostate cancer biomarkers in urine, plasma, serum and extracellular vesicles. The prime aim of the GAP1 initiative was to develop a multi-modal urine biomarker panel for the discrimination of disease state. The authors have previously published analyses from two of the GAP1 studies that measured differing molecular aspects within urine; epiCaPture assayed hypermethylation of urinary cell DNA [@OReilly2019], and PUR assessed transcript levels in cell-free extracellular vesicle mRNA (cf-RNA) using NanoString [@Connell]. Both of these tests were able to discriminate some level of clinically significant disease and exhibited differing characteristics; where epiCaPture was well suited to detecting the highest grade disease (Gleason score ≥8), PUR was better matched to the deconvolution of lower risk and indolent disease, as detailed by its prognostic ability in active surveillance use. With a suitable overlap in the numbers of patient samples analysed by both methods, we hypothesised that these two methods could be complementary, and the integration of both datasets could result in a more holistic model with predictive ability greater than the sum of its parts, able to encapsulate the clinical heterogeneity of prostate cancer and reach the levels of accuracy and utility required for widespread adoption.
-In this study, we report the diagnostic accuracy of such an integrated model, determined by the ability to predict the presence of Gs ≥7 and Gs ≥4+3 disease on biopsy, both critical distinctions, where patients with Gs ≥ 7 are recommended radical therapy [@NICE2019], whilst patients with Gs 4+3 have significantly worse outcomes than Gs 3+4 patients [@Stark2009]. Mindful that many cancer biomarkers fail to translate to the clinic, the development of the presented model has been carried out adhering to the transparent reporting of a multivariable prediction model for individual prognosis or diagnosis (TRIPOD) guidelines [@TRIPOD].
+This is placeholder text for the introduction - depending on journal this may be considered copyrighted.
 
 # Methods 
 ### Patient population and characteristics
@@ -354,7 +345,7 @@ ExoMeth_clm <- AllModels$ExoMeth$Results %>%
   MASS::polr(Gleason ~ RiskScore, data = ., Hess = TRUE)
 
 #Ordinal logistic regression returns coefficients scaled in terms of logs and are awkward to interpret.
-# Exponentiating them gives us the odds ratio for a "unit" change in Risk Score:
+# Exponentiating them gives us the odds ratio for a "unit" (0.1) change in Risk Score:
 OddsRatio <- suppressMessages(paste0("Proportional odds ratio = ",
       round(exp(coef(ExoMeth_clm)), 2), 
       "per 0.1 ExoMeth increase, 95% CI: ",
@@ -558,7 +549,7 @@ Resampling of ExoMeth predictions via estimation plots allowed for comparisons o
 ```{r DCA}
 #Set the parameters for resampling:
 set.seed(2903)
-iterations <- 100
+iterations <- 1000
 sample_size <- nrow(ExoMeth_Cohort)
 
 #Need to set up the data a bit to conform by removing the CB men (they don't get biopsies):
@@ -686,13 +677,7 @@ Decision curve analysis examined the net benefit of adopting ExoMeth in a popula
 
 # Discussion
 
-The accurate discrimination of disease state in men prior to a confirmatory initial biopsy would mark a significant development and impact large numbers of men suspected of harbouring prostate cancer. Up to 75% of men with a raised PSA (≥4 ng/mL) are negative for prostate cancer on biopsy [@NICE2019;@Martin2018;@Lane2014]. This has resulted in concentrated research efforts to address this problem non-invasively, and resulting in the development of several biomarker panels capable of detecting Gleason ≥3+4 disease with superior accuracy to current clinically implemented methods [@Hessels2003;@VanNeste2016;@McKiernan2016b;@Connell]. However, in each of these examples, only a single quantification method or biological process is assayed and with the molecular heterogeneity of prostate cancer considered [@Ciccarese2017], a more holistic approach is necessary.
-
-It is becoming apparent from published data that urine can contain a wealth of useful cancer biomarkers within RNA, DNA, cell-free DNA, DNA methylation and proteins [@Connell;@OReilly2019;@Zhao2018;@Xia2016;@Killick2013]. However, the analyses presented here are, to the author’s knowledge, the first attempt to integrate such biomarker information within the same samples for the detection of prostate cancer prior to biopsy. There has recently been reported that a combination of miRNA and methylation markers can be used to predict outcome following radical prostatectomy [@Strand2019]. Our results show an improved diagnostic marker can be produced from the synergistic relationship of information derived from different urine fractions in men suspected to have prostate cancer. The methylation of six previously identified genes [@OReilly2019] was quantified via methylation specific qPCR, whilst the transcript levels of 167 cell-free mRNAs were quantified using NanoString technology. . The final model integrating this information with serum PSA levels was deemed ExoMeth. Markers selected for the model include well known genes associated with prostate cancer and proven in other diagnostic tests, such as HOXC6 [@VanNeste2016], PCA3 [@Hessels2003, @Tomlins2016a] and the TMPRSS2/ERG gene fusion [@Tomlins2016a]. ExoMeth additionally incorporated GJB1 as the most important variable for predicting biopsy outcome. Whilst GJB1 is known to be a prognostic marker for favourable outcome in renal cancers, there is no evidence of its use as a diagnostic biomarker in prostate cancer [@Ricketts2018;@TheHumanProteinAtlas].
-
-ExoMeth was able to correctly predict the presence of significant prostate cancer on biopsy with an AUC of 0.89, representing a significant uplift when compared to other published tests (AUCs for Gs ≥7 : PUR = 0.77 [@Connell], ProCUrE = 0.73 [@Zhao2018], ExoDX Prostate IntelliScore = 0.77 [@McKiernan2016b], SelectMDX = 0.78 [@VanNeste2016], epiCaPture Gs ≥4+3 AUC = 0.73 [@OReilly2019]). Furthermore, ExoMeth resulted in accurate predictions even when serum PSA levels alone were inaccurate; where patients with a raised PSA but negative biopsy result possessed similar ExoMeth scores as clinically benign men, whilst still able to discriminate between Gleason grades (**Figure 4**). These are men that would be unnecessarily subjected to biopsy by current guidelines. Of the three patients with no evidence of cancer on biopsy with an ExoMeth risk score >0.55, two were positive for the *TMPRSS2/ERG* fusion transcript in NanoString analyses (data not shown), implying that PCa may have been missed and re-biopsy may be necessary [@Tomlins2008].
-
-Whilst every step has been taken to robustly develop ExoMeth to minimise potential overfitting and bias through extensive bootstrap resampling and the use of out-of-bag predictions, ExoMeth nonetheless was developed on a small dataset and requires validation in an independent cohort before its use a clinical marker can be considered. Additionally, as MP-MRI can misrepresent disease state in patients, even when rigorous protocols are implemented [@Ahmed2017] the clinical utility of supplementing MP-MRI with ExoMeth needs to be assessed. For many men harbouring indolent prostate cancer, ExoMeth could greatly impact their experience of prostate cancer care when compared to current clinical pathways.
+This is placeholder text for the Discussion - depending on journal this may be considered copyrighted.
  
 ### Funding Sources & Acknowledgements:
 This study was possible thanks to the Movember Foundation GAP1 Urine Biomarker project, The Masonic Charitable Foundation, The Bob Champion Cancer Trust, the King family, The Andy Ripley Memorial Fund and the Stephen Hargrave Trust.
