@@ -12,37 +12,39 @@ link-citations: yes
 csl: vancouver.csl
 ---
 ```{r Base setup and data load, include=FALSE, message=FALSE}
-# Always set the random seed, even if you don't think you need it (this work definitely does!). Please note that these analyses were originally 
+# Always set the random seed, even if you don't think you need it (this work definitely does!). Please note that these analyses were originally
 # performed in R Version 3.5.3 and a change was made to the sampling function in 3.6, making these results no longer
-# quantitatively reproducible. So I have added a catch to "reset" the RNG to the "old" rounding version if this 
+# quantitatively reproducible. So I have added a catch to "reset" the RNG to the "old" rounding version if this
 # is knitted in >3.5.3
 RNGversion("3.5.3")
 set.seed(2903)
-#knitr setup
-knitr::opts_chunk$set(echo = FALSE, 
-                      include = TRUE,
-                      fig.align = "centre",
-                      cache = FALSE,
-                      dev = "png",
-                      dpi = 450)
-######## LOAD LIBRARIES AND SET PARAMETERS ######## 
-#Cleaning and munging:
+# knitr setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  include = TRUE,
+  fig.align = "centre",
+  cache = FALSE,
+  dev = "png",
+  dpi = 450
+)
+######## LOAD LIBRARIES AND SET PARAMETERS ########
+# Cleaning and munging:
 library(tidyverse)
 library(magrittr)
 library(here)
 
-#Modelling:
+# Modelling:
 library(Boruta)
 library(randomForest)
 library(tidymodels)
 
-#Computation
+# Computation
 library(furrr)
 library(pROC)
 library(rmda)
 library(splitstackshape)
 
-#Making things pretty:
+# Making things pretty:
 library(formattable)
 library(qwraps2)
 library(ggpubr)
@@ -50,13 +52,13 @@ library(ggsci)
 library(dabestr)
 library(cowplot)
 
-#Settings for tables to at least be printed in the .doc:
+# Settings for tables to at least be printed in the .doc:
 options(qwraps2_markup = "markdown")
-#Set the parallelisation options:
+# Set the parallelisation options:
 plan(multisession)
-#Set the default ggplot theme:
+# Set the default ggplot theme:
 theme_set(theme_cowplot())
-#'Custom' colours for the plots:
+#' Custom' colours for the plots:
 D3Red <- "#D62728FF"
 D3Orange <- "#FF7F0EFF"
 D3Blue <- "#1F77B4FF"
@@ -66,23 +68,22 @@ D3Purp <- "#9467BDFF"
 #### Data loading and defining variable sets ####
 ## Read in the ExoMeth dataset and the ExoMeth metastatic dataframes:
 ExoMeth_Cohort <- readRDS(here("data", "ExoMeth_Cohort.RDS"))
-MetsSamples    <- readRDS(here("data", "ExoMeth_Mets.RDS"))
+MetsSamples <- readRDS(here("data", "ExoMeth_Mets.RDS"))
 
 ## Define the different groups of dataframe variables needed for analysis:
-#Methylation:
+# Methylation:
 MethProbes <- c("mGSTP1", "mAPC", "mSFRP2", "mIGFBP3", "mIGFBP7", "mPTGS2")
 
-#Clinical Variables:
+# Clinical Variables:
 ClinVars <- c("PSA", "UrineVol", "DRESize", "Age")
 
-#The outcomes assessed later on (see data dictionary for formal definition):
-outcomes <- c("Cat", "TriSig", "GleaSig", "LowGSig", "ClinSig", 
-              "is_C")
+# The outcomes assessed later on (see data dictionary for formal definition):
+outcomes <- c("Cat", "TriSig", "GleaSig", "LowGSig", "ClinSig","is_C")
 
-#The NanoString variables (lazily from the ExoMeth dataframe)
-NanoGenes <- ExoMeth_Cohort %>% 
-      select(-Sample_ID, -ClinVars, -outcomes, -MethProbes, -Gleason) %>% 
-      colnames
+# The NanoString variables (lazily from the ExoMeth dataframe)
+NanoGenes <- ExoMeth_Cohort %>%
+  select(-Sample_ID, -ClinVars, -outcomes, -MethProbes, -Gleason) %>%
+  colnames()
 ```
 
 # Introduction
@@ -118,23 +119,24 @@ set.seed(2903)
 # For ease of computation the resampled Boruta has been precomputetd for you using the UEA HPC. However, if you wish
 # to recompute, or would like to tweak the analyses you can uncomment the below line to run the code. Additionally
 # it's possible to run the script in isolation as it calls all the data itself.
-#source(here("src/HPC_Boruta.R"))
+# source(here("src/HPC_Boruta.R"))
 
 # Load in the pre-computed Boruta resamples for analysis:
 ResampledBoruta <- readRDS(here::here("output/data_out/ResampledBoruta.RDS"))
 
 # Extract the important variables for each set of input variables and produce a list for later use:
 ConfirmedVariables <- map(
-  #Loop through each resample of the Boruta runs
-  ResampledBoruta, function(Single_Boruta){
-    Single_Boruta %>% 
-      #Filter only "confirmed" variables
-      filter(FinalDecision == "Confirmed") %>% 
-      #Select only the variables and make a distinct list of them
-      select(Variable) %>% 
-      distinct() %>% 
+  # Loop through each resample of the Boruta runs
+  ResampledBoruta, function(Single_Boruta) {
+    Single_Boruta %>%
+      # Filter only "confirmed" variables
+      filter(FinalDecision == "Confirmed") %>%
+      # Select only the variables and make a distinct list of them
+      select(Variable) %>%
+      distinct() %>%
       as_vector()
-  }) %>% 
+  }
+) %>%
   set_names(c("SoC", "Methylation", "ExoRNA", "ExoMeth"))
 ```
 
@@ -149,46 +151,50 @@ All models were trained via the random forest algorithm [@Breiman2001], using th
 Models were trained on a modified continuous label, based by binning on biopsy outcome and constructed as follows: samples were binned on a continuous scale (range 0 – 1) according to Gleason score: where no evidence of cancer on biopsy are scored 0, patients with disease consisting mostly of Gleason 3 are equal to 0.5 and predominantly Gleason 4 (or 5) are assigned to 1. Treating this label as a continuous variable recognises that two patients with the same Gleason scored TRUS-biopsy detected cancer may not share the exact same proportions of tumour pattern, or overall disease burden within their prostate. This scale is solely used for model training and is not represented in any clinical endpoint measurements, or for determining predictive ability and clinical utility. 
 
 ```{r RF model building}
-# This chunk defines a helper function for training Random Forest models and then trains all of the comparator 
+# This chunk defines a helper function for training Random Forest models and then trains all of the comparator
 # models in one big loop, using the features selected above in Table 1.
 
-#Easiest to define a function that can store the model and oob predictions for a random forest:
-RFModelHelper <- function(Variables, 
+# Easiest to define a function that can store the model and oob predictions for a random forest:
+RFModelHelper <- function(Variables,
                           Dataframe = ExoMeth_Cohort,
-                          #Use the continuous version of the TriSig label:
+                          # Use the continuous version of the TriSig label:
                           TrainingLabel = as.numeric(ExoMeth_Cohort$TriSig) - 1,
                           ModelName = "RiskScore",
-                          seed = 2903){
+                          seed = 2903) {
   set.seed(seed)
   # Train the RF model (suppress the warning because less than 5 response levels
   # in a regression makes it suggest classification)
-  model = suppressWarnings(
+  model <- suppressWarnings(
     randomForest(Dataframe[, Variables],
-                 y = TrainingLabel,
-                 ntree = 301,
-                 replace = FALSE)
+      y = TrainingLabel,
+      ntree = 301,
+      replace = FALSE
+    )
   )
-  #Return out-of-bag results from said RF model:
-  results = predict(model, type = "response") %>% 
-    #Bind as a dataframe
+  # Return out-of-bag results from said RF model:
+  results <- predict(model, type = "response") %>%
+    # Bind as a dataframe
     as.data.frame() %>%
-    #set the name of the risk score:
-    set_names(ModelName) %>% 
-    #The range of TriSig is [0,2] so halving it gives a nicer number to work with:
-    mutate(RiskScore = RiskScore * 0.5) %>% 
-    #Bind the columns of the dataframe:
+    # set the name of the risk score:
+    set_names(ModelName) %>%
+    # The range of TriSig is [0,2] so halving it gives a nicer number to work with:
+    mutate(RiskScore = RiskScore * 0.5) %>%
+    # Bind the columns of the dataframe:
     bind_cols(Dataframe)
-  #Return the model & results as a list
-  return(list(Model = model,
-              Results = results))
+  # Return the model & results as a list
+  return(list(
+    Model = model,
+    Results = results
+  ))
 }
 #### Train each comparator models ####
-#Map through each of the comparator choices and produce a model.
-AllModels <- map(ConfirmedVariables, RFModelHelper) %>% 
+# Map through each of the comparator choices and produce a model.
+AllModels <- map(ConfirmedVariables, RFModelHelper) %>%
   set_names(c("SoC", "Methylation", "ExoRNA", "ExoMeth"))
-#Use the completely held-out metastatic patients as a form of "positive" control.
-MetsPredictions <- predict(AllModels$ExoMeth$Model, 
-                           newdata = MetsSamples[, ConfirmedVariables[["ExoMeth"]]])
+# Use the completely held-out metastatic patients as a form of "positive" control.
+MetsPredictions <- predict(AllModels$ExoMeth$Model,
+  newdata = MetsSamples[, ConfirmedVariables[["ExoMeth"]]]
+)
 ```
 
 #### Statistical evaluation of model predictivity
@@ -208,87 +214,114 @@ Linked methylation and transcriptomic data were available for 197 patients withi
 
 **Table 1.** *Characteristics of the ExoMeth development cohort.*
 ```{r Cohort characteristics, results='asis'}
-#Produce a table (that unfortunately needs editing outside of R because of the wonders of Word .doc format)
-ExoMeth_Cohort %>% 
-  #order the Lab and DRE size factor for the table
-  mutate('Collection Centre:' = if_else(str_detect(Sample_ID, "M_"), "NNUH, n (%)", "SJH, n (%)"),
-         'Age:' = Age,
-         'PSA:' = PSA,
-         'Prostate Size (DRE Estimate):' = factor(DRESize, 
-                                                  levels = c("small", "medium", "large", "unknown"), 
-                                                  labels = c("Small, n (%)", "Medium, n (%)", "Large, n (%)", "Unknown, n (%)"),
-                                                  ordered = TRUE),
-         #For some reason this doesn't actually order them in the final table...
-         'Gleason Score:' = factor(case_when(Gleason == 0 ~ "0, n (%)",
-                                             Gleason == 6 ~ "6, n (%)",
-                                             Gleason == 7 ~ "3+4, n (%)",
-                                             Gleason == 7.5 ~ "4+3, n (%)",
-                                             Gleason %in% c(8, 9, 10) ~ "\u2265 8, n (%)"),
-                                   ordered = TRUE),
-         Biopsy_Result = if_else(is_C == "Yes", "Biopsy Positive", "Biopsy Negative")) %>% 
-  #Select the variables we want to summarise across the labs
-  select('Collection Centre:', 'Age:', 'PSA:', 'Prostate Size (DRE Estimate):', 'Gleason Score:', Biopsy_Result) %>%
-  group_by(Biopsy_Result) %>% 
-  summary_table() %>% 
+# Produce a table (that unfortunately needs editing outside of R because of the wonders of Word .doc format)
+ExoMeth_Cohort %>%
+  # order the Lab and DRE size factor for the table
+  mutate(
+    "Collection Centre:" = if_else(str_detect(Sample_ID, "M_"), "NNUH, n (%)", "SJH, n (%)"),
+    "Age:" = Age,
+    "PSA:" = PSA,
+    "Prostate Size (DRE Estimate):" = factor(DRESize,
+      levels = c("small", "medium", "large", "unknown"),
+      labels = c("Small, n (%)", "Medium, n (%)", "Large, n (%)", "Unknown, n (%)"),
+      ordered = TRUE
+    ),
+    # For some reason this doesn't actually order them in the final table...
+    "Gleason Score:" = factor(case_when(
+      Gleason == 0 ~ "0, n (%)",
+      Gleason == 6 ~ "6, n (%)",
+      Gleason == 7 ~ "3+4, n (%)",
+      Gleason == 7.5 ~ "4+3, n (%)",
+      Gleason %in% c(8, 9, 10) ~ "\u2265 8, n (%)"
+    ),
+    ordered = TRUE
+    ),
+    Biopsy_Result = if_else(is_C == "Yes", "Biopsy Positive", "Biopsy Negative")
+  ) %>%
+  # Select the variables we want to summarise across the labs
+  select("Collection Centre:", "Age:", "PSA:", "Prostate Size (DRE Estimate):", "Gleason Score:", Biopsy_Result) %>%
+  group_by(Biopsy_Result) %>%
+  summary_table() %>%
   print(markup = "markdown", cnames = c("Biopsy Negative:", "Biopsy Positive"))
 ```
 
 ### Feature selection and model development
 
 ```{r Boruta}
-#Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
 
-ExoMeth_Features <- ResampledBoruta$ExoMeth %>% 
-  filter(Importance != -Inf) %>% 
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>% 
-  mutate(Variable = str_remove(Variable, "^m"),
-         #Bind the proportions so that they can be filled in nicely on a plot:
-         Proportion = case_when(Proportion <= 0.05 ~ "<5%",
-                                Proportion <= 0.25 ~ "5 - 25%",
-                                Proportion <= 0.50 ~ "25 - 50%",
-                                Proportion <= 0.75 ~ "50 - 75%",
-                                Proportion <= 0.90 ~ "75 - 90%",
-                                Proportion >= 0.90 ~ ">90%"),
-         #Mutate the Shadow feature strings to look nice:
-         Proportion = if_else(str_detect(Variable, "shadow"), 
-                              "Shadow Feature", 
-                              Proportion),
-         Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-         Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-         Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-         #Make sure Proportion is an ordered factor.
-         Proportion = factor(Proportion, 
-                             levels = c("<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-                                        "Shadow Feature"),
-                             ordered = TRUE))
-#ExoMeth_Features is used multiple times below so the plot here is done in two parts.
-BorutaPlotData <- ExoMeth_Features %>% 
-  #Add a flag to the methylation/clinical variables
+ExoMeth_Features <- ResampledBoruta$ExoMeth %>%
+  filter(Importance != -Inf) %>%
+  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
+  mutate(
+    Variable = str_remove(Variable, "^m"),
+    # Bind the proportions so that they can be filled in nicely on a plot:
+    Proportion = case_when(
+      Proportion <= 0.05 ~ "<5%",
+      Proportion <= 0.25 ~ "5 - 25%",
+      Proportion <= 0.50 ~ "25 - 50%",
+      Proportion <= 0.75 ~ "50 - 75%",
+      Proportion <= 0.90 ~ "75 - 90%",
+      Proportion >= 0.90 ~ ">90%"
+    ),
+    # Mutate the Shadow feature strings to look nice:
+    Proportion = if_else(str_detect(Variable, "shadow"),
+      "Shadow Feature",
+      Proportion
+    ),
+    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
+    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
+    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
+    # Make sure Proportion is an ordered factor.
+    Proportion = factor(Proportion,
+      levels = c(
+        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
+        "Shadow Feature"
+      ),
+      ordered = TRUE
+    )
+  )
+# ExoMeth_Features is used multiple times below so the plot here is done in two parts.
+BorutaPlotData <- ExoMeth_Features %>%
+  # Add a flag to the methylation/clinical variables
   mutate(
     Variable = case_when(
       Variable %in% str_remove(MethProbes, "^m") ~ paste(Variable, "(Methylated)", sep = " "),
       Variable == "PSA" ~ paste("Serum", Variable, sep = " "),
-      TRUE ~ Variable),
-    Variable = str_replace(Variable, "ERG3", "ERG"))
+      TRUE ~ Variable
+    ),
+    Variable = str_replace(Variable, "ERG3", "ERG")
+  )
 
 # Can now produce the Boruta plot:
-BorutaPlot <- ggplot(BorutaPlotData, 
-                     aes(x = reorder(Variable, Importance), 
-                         y = Importance, fill = as.factor(Proportion))) +
-      geom_boxplot(outlier.alpha = 0.5) +
-      theme_pubclean() +
-      theme(legend.position = "bottom",
-            axis.text.y = element_text(face = if_else(
-                  levels(reorder(BorutaPlotData$Variable, BorutaPlotData$Importance)) %in% 
-                        c("Serum PSA", "Shadow Maximum", "Shadow Minimum", "Shadow Mean"), 
-                  "plain", "italic"))) +
-      guides(fill = guide_legend(title = 'Proportion of resamples "Confirmed":',
-                                 title.position = "top",
-                                 title.hjust = 0.5)) +
-      labs(x = NULL,
-           y = "Normalised permutation importance") +
-      coord_flip() +
-      scale_fill_manual(values = c(D3Red, D3Orange, D3Blue, D3Green, D3Purp))
+BorutaPlot <- ggplot(
+  BorutaPlotData,
+  aes(
+    x = reorder(Variable, Importance),
+    y = Importance, fill = as.factor(Proportion)
+  )
+) +
+  geom_boxplot(outlier.alpha = 0.5) +
+  theme_pubclean() +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(face = if_else(
+      levels(reorder(BorutaPlotData$Variable, BorutaPlotData$Importance)) %in%
+        c("Serum PSA", "Shadow Maximum", "Shadow Minimum", "Shadow Mean"),
+      "plain", "italic"
+    ))
+  ) +
+  guides(fill = guide_legend(
+    title = 'Proportion of resamples "Confirmed":',
+    title.position = "top",
+    title.hjust = 0.5
+  )) +
+  labs(
+    x = NULL,
+    y = "Normalised permutation importance"
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = c(D3Red, D3Orange, D3Blue, D3Green, D3Purp))
 ```
 
 Using a robust feature selection framework four models were produced in total; a standard of care (SoC) model using only clinical information (age and PSA), a model using only methylation data (Methylation, 6 genes), a model using only cf-RNA information (ExoRNA, 12 gene-probes) and the integrated model, deemed ExoMeth (16 variables) (Table 2). The ExoMeth model is a multivariable risk prediction model incorporating clinical, methylation and cf-RNA variables. When the resampling strategy was applied for feature reduction using Boruta, 16 variables were selected for the ExoMeth model. Each of the retained variables were positively selected in every resample and notably included information from clinical, methylation and cf-RNA variables (Figure 1). Full resample-derived Boruta variable importances for the SoC, Methylation and ExoRNA comparator models can be seen in Supplementary Figures 1 – 3, respectively.
@@ -298,88 +331,108 @@ In the SoC comparator model only PSA and age were selected as important predicto
 
 **Table 2.** *Boruta-derived features positively selected for each model. Features are selected for each model by being confirmed as important for predicting biopsy outcome, categorised as a modified ordinal variable (see Methods) by Boruta in ≥ 90% of bootstrap resamples. Variables selected for the fully integrated model (ExoMeth) are in the highlighted column; for example; Age is selected within the SoC model, but not in ExoMeth.*
 ```{r Features selected}
-#Map through the uneven list, adding blank rows to make it all even for a table:
-SelectedFeatures <- map_dfc(ConfirmedVariables, function(variables){
-  append(variables,
-         rep("", 
-             max(map_dbl(ConfirmedVariables, length)) - length(variables))) %>% 
-    #Strip the "m" methylation identifier (is ugly)
-    str_remove("^m") 
-}) %>% 
-  set_colnames(c("SoC", "Methylation", "ExoRNA", "ExoMeth")) %>% 
-  #Turn this into a table, that again is formatted outside of R.
+# Map through the uneven list, adding blank rows to make it all even for a table:
+SelectedFeatures <- map_dfc(ConfirmedVariables, function(variables) {
+  append(
+    variables,
+    rep(
+      "",
+      max(map_dbl(ConfirmedVariables, length)) - length(variables)
+    )
+  ) %>%
+    # Strip the "m" methylation identifier (is ugly)
+    str_remove("^m")
+}) %>%
+  set_colnames(c("SoC", "Methylation", "ExoRNA", "ExoMeth")) %>%
+  # Turn this into a table, that again is formatted outside of R.
   formattable(
-    list(SoC = formatter("span",
-                              style = ~ style("font-weight" = ifelse(SoC %in% ExoMeth, "bold", "normal"))),
-         Methylation = formatter("span",
-                                 style = ~ style("font-weight" = ifelse(Methylation %in% ExoMeth, "bold", "normal"))),
-         ExoRNA = formatter("span",
-                                style = ~ style("font-weight" = ifelse(ExoRNA %in% ExoMeth, "bold", "normal")))
-    ))
+    list(
+      SoC = formatter("span",
+        style = ~ style("font-weight" = ifelse(SoC %in% ExoMeth, "bold", "normal"))
+      ),
+      Methylation = formatter("span",
+        style = ~ style("font-weight" = ifelse(Methylation %in% ExoMeth, "bold", "normal"))
+      ),
+      ExoRNA = formatter("span",
+        style = ~ style("font-weight" = ifelse(ExoRNA %in% ExoMeth, "bold", "normal"))
+      )
+    )
+  )
 
-format_table(SelectedFeatures,format = "markdown")
+format_table(SelectedFeatures, format = "markdown")
 ```
 
 ### ExoMeth predictive ability
 ```{r Waterfall histogram}
 
-#Take the results dataframe and make a density plot that is filled according to a chosen label
-Waterfall_Plot <- AllModels$ExoMeth$Results %>% 
+# Take the results dataframe and make a density plot that is filled according to a chosen label
+Waterfall_Plot <- AllModels$ExoMeth$Results %>%
   mutate(GroupedGleason = factor(
-    case_when(Gleason == 0 ~ "No Evidence of Cancer",
-              Gleason == 6 ~ "Gleason = 6",
-              Gleason == 7 ~ "Gleason = 3+4",
-              Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3"),
+    case_when(
+      Gleason == 0 ~ "No Evidence of Cancer",
+      Gleason == 6 ~ "Gleason = 6",
+      Gleason == 7 ~ "Gleason = 3+4",
+      Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3"
+    ),
     levels = c("No Evidence of Cancer", "Gleason = 6", "Gleason = 3+4", "Gleason \u22654+3"),
-    ordered = TRUE)) %>% 
+    ordered = TRUE
+  )) %>%
   ggplot(aes(x = fct_reorder(Sample_ID, RiskScore), y = RiskScore, fill = GroupedGleason)) +
   geom_bar(stat = "identity") +
   theme_cowplot() +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        legend.position = "bottom",
-        legend.justification = "center") +
-  labs(x = "Patient Biopsy",
-       y = "ExoMeth Risk Signature",
-       fill = "Biopsy Outcome") +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "bottom",
+    legend.justification = "center"
+  ) +
+  labs(
+    x = "Patient Biopsy",
+    y = "ExoMeth Risk Signature",
+    fill = "Biopsy Outcome"
+  ) +
   scale_fill_manual(values = c("#2CA02CFF", "#1F77B4FF", "#FF7F0EFF", "#D62728FF"))
 
 #### Calculate Odds ratios
-#This uses the MASS package and polr to get the odds ratio for a "unit" change in EpiPUR compared to Gleason outcome (sub-optimal - assumes linearity and continuous outcome really...).
-ExoMeth_clm <- AllModels$ExoMeth$Results %>% 
-    mutate(RiskScore = RiskScore *10,
-           Gleason = factor(Gleason, 
-                            levels = c(0, 6, 7, 7.5, 8, 9, 10, 11),
-                            ordered = TRUE)) %>% 
+# This uses the MASS package and polr to get the odds ratio for a "unit" change in EpiPUR compared to Gleason outcome (sub-optimal - assumes linearity and continuous outcome really...).
+ExoMeth_clm <- AllModels$ExoMeth$Results %>%
+  mutate(
+    RiskScore = RiskScore * 10,
+    Gleason = factor(Gleason,
+      levels = c(0, 6, 7, 7.5, 8, 9, 10, 11),
+      ordered = TRUE
+    )
+  ) %>%
   MASS::polr(Gleason ~ RiskScore, data = ., Hess = TRUE)
 
-#Ordinal logistic regression returns coefficients scaled in terms of logs and are awkward to interpret.
+# Ordinal logistic regression returns coefficients scaled in terms of logs and are awkward to interpret.
 # Exponentiating them gives us the odds ratio for a "unit" (0.1) change in Risk Score.
 # Here we manipulate the output to give a nice string we can use in-line.
-OddsRatio <- suppressMessages(paste0("Proportional odds ratio = ",
-      round(exp(coef(ExoMeth_clm)), 2), 
-      "per 0.1 ExoMeth increase, 95% CI: ",
-      round(exp(confint(ExoMeth_clm)[[1]]), 2),
-      " - ",
-      round(exp(confint(ExoMeth_clm)[[2]]), 2)
+OddsRatio <- suppressMessages(paste0(
+  "Proportional odds ratio = ",
+  round(exp(coef(ExoMeth_clm)), 2),
+  "per 0.1 ExoMeth increase, 95% CI: ",
+  round(exp(confint(ExoMeth_clm)[[1]]), 2),
+  " - ",
+  round(exp(confint(ExoMeth_clm)[[2]]), 2)
 ))
 
 ### Metrics referred to in-line:
 
-#Grab the ExoMeth score that grabs 95% of G7 patients:
-HighRiskConfInt <- AllModels$ExoMeth$Results %>% 
-  filter(LowGSig == "Yes") %>% 
+# Grab the ExoMeth score that grabs 95% of G7 patients:
+HighRiskConfInt <- AllModels$ExoMeth$Results %>%
+  filter(LowGSig == "Yes") %>%
   summarise(Conf = round(quantile(RiskScore, 0.05), 3))
 
-#Find the SoC model score that gets 90% of G7 right
-SoC_Conf_intervals <- AllModels[["SoC"]][["Results"]] %>% 
-  filter(LowGSig == "Yes") %>% 
+# Find the SoC model score that gets 90% of G7 right
+SoC_Conf_intervals <- AllModels[["SoC"]][["Results"]] %>%
+  filter(LowGSig == "Yes") %>%
   summarise(Conf = round(quantile(RiskScore, 0.1), 3))
 
 # Now find the number of patients the SoC model would misclassify at that score:
-SoC_Misclassify <- AllModels[["SoC"]][["Results"]] %>% 
-  filter(LowGSig == "No") %>% 
-  tally(RiskScore >= SoC_Conf_intervals$Conf) / 
+SoC_Misclassify <- AllModels[["SoC"]][["Results"]] %>%
+  filter(LowGSig == "No") %>%
+  tally(RiskScore >= SoC_Conf_intervals$Conf) /
   nrow(AllModels[["SoC"]][["Results"]] %>% filter(LowGSig == "No"))
 ```
 
@@ -387,42 +440,47 @@ As ExoMeth Risk Score (range 0-1) increased, the likelihood of high-grade diseas
 
 **Table 3.** *AUC of all trained models for detecting outcomes of an initial biopsy for varying clinically significant thresholds. Brackets show 95% confidence intervals of the AUC, calculated from 1,000 stratified bootstrap resamples. Input variables for each model are detailed in Table 1.*
 ```{r model AUCs}
-#Create another helper function that can grab the AUCs for a variety of (binary) outcomes@
-get_aucs <- function(ResultDF, RiskScore = "RiskScore", 
+# Create another helper function that can grab the AUCs for a variety of (binary) outcomes@
+get_aucs <- function(ResultDF, RiskScore = "RiskScore",
                      test_labels = c("GleaSig", "LowGSig", "is_C")) {
-  #Map through the labels, returning a vector of AUCs, rounded to 2decimal places:
-  future_map_chr(test_labels, function(label){
-    tmp <- roc(ResultDF[[label]], 
-               ResultDF[[RiskScore]], 
-               ci = TRUE,
-               ci.method = "boot",
-               of = "auc",
-               progress = "none", 
-               boot.n = 1000,
-               levels = c("No", "Yes"),
-               direction = "<")
-    #Glue together the AUC, and the 95% CI for each measure:
-    paste0(sprintf("%.2f", round(tmp[["auc"]][[1]], 2)),
-           " (",
-           sprintf("%.2f", round(tmp[["ci"]][["2.5%"]], 2)),
-           " - ",
-           sprintf("%.2f", round(tmp[["ci"]][["97.5%"]], 2)),
-           ")"
+  # Map through the labels, returning a vector of AUCs, rounded to 2decimal places:
+  future_map_chr(test_labels, function(label) {
+    tmp <- roc(ResultDF[[label]],
+      ResultDF[[RiskScore]],
+      ci = TRUE,
+      ci.method = "boot",
+      of = "auc",
+      progress = "none",
+      boot.n = 1000,
+      levels = c("No", "Yes"),
+      direction = "<"
+    )
+    # Glue together the AUC, and the 95% CI for each measure:
+    paste0(
+      sprintf("%.2f", round(tmp[["auc"]][[1]], 2)),
+      " (",
+      sprintf("%.2f", round(tmp[["ci"]][["2.5%"]], 2)),
+      " - ",
+      sprintf("%.2f", round(tmp[["ci"]][["97.5%"]], 2)),
+      ")"
     )
   })
 }
-#Generate a dataframe of the AUCs for each model and outcome so that it can be pulled out for inline use below:
-AUC_Table <- bind_cols(tibble(Outcome = c("Gleason \u22654+3:", 
-                             "Gleason \u22653+4:", 
-                             "Any Cancer")),
-          map_df(AllModels, function(model) {
-            get_aucs(model$Results)
-          })  
-) %>% 
-  set_colnames(c("Initial biopsy outcome:", "SoC", "Methylation", "ExoRNA", "ExoMeth")) 
-#Print the AUC table
-AUC_Table %>% 
-  formattable(align = c("l", "r", "r", "r", "r")) %>% 
+# Generate a dataframe of the AUCs for each model and outcome so that it can be pulled out for inline use below:
+AUC_Table <- bind_cols(
+  tibble(Outcome = c(
+    "Gleason \u22654+3:",
+    "Gleason \u22653+4:",
+    "Any Cancer"
+  )),
+  map_df(AllModels, function(model) {
+    get_aucs(model$Results)
+  })
+) %>%
+  set_colnames(c("Initial biopsy outcome:", "SoC", "Methylation", "ExoRNA", "ExoMeth"))
+# Print the AUC table
+AUC_Table %>%
+  formattable(align = c("l", "r", "r", "r", "r")) %>%
   format_table(format = "markdown")
 ```
 
@@ -431,262 +489,329 @@ ExoMeth was superior to all other models, returning an AUC of `r str_replace(AUC
 
 ```{r RF model Density plots, echo=FALSE,message=FALSE}
 # Make a decent helper function to plot out the predictions for a given model as a density:
-Model_Plots <- function(ResultDF, 
-                        RiskScore = "RiskScore", 
+Model_Plots <- function(ResultDF,
+                        RiskScore = "RiskScore",
                         xlab_title = "Risk Signature",
                         fill_col,
                         fill_col_title,
                         fill_col_labels) {
-      #Take the results dataframe and make a density plot that is filled according to a chosen label
-      ResultDF %>% 
-            ggplot(aes_string(x = RiskScore, fill = fill_col)) +
-            geom_density(alpha = 0.6) +
-            labs(fill = fill_col_title,
-                 #Also calculate the AUCs for a variety of outcomes. Not strictly needed but looks nice:
-                 caption = paste0("Model AUCs for determining:",
-                                  "\n\u2022 Gleason \u22654+3: ", 
-                                  round(roc_auc(data = ResultDF,
-                                                GleaSig, RiskScore)$.estimate, 2),
-                                  "    \u2022 Gleason \u22653+4: ", 
-                                  round(roc_auc(data = ResultDF, 
-                                                LowGSig, RiskScore)$.estimate, 2),
-                                  "    \u2022 Any cancer: ", 
-                                  round(roc_auc(data = ResultDF, 
-                                                is_C, RiskScore)$.estimate, 2)),
-                 x = xlab_title,
-                 y = "Density") +
-            theme_pubr() +
-            scale_fill_d3(labels = fill_col_labels) +
-            theme(plot.caption = element_text(hjust = 0, size = 14),
-                  legend.justification = c(1,0))
+  # Take the results dataframe and make a density plot that is filled according to a chosen label
+  ResultDF %>%
+    ggplot(aes_string(x = RiskScore, fill = fill_col)) +
+    geom_density(alpha = 0.6) +
+    labs(
+      fill = fill_col_title,
+      # Also calculate the AUCs for a variety of outcomes. Not strictly needed but looks nice:
+      caption = paste0(
+        "Model AUCs for determining:",
+        "\n\u2022 Gleason \u22654+3: ",
+        round(roc_auc(
+          data = ResultDF,
+          GleaSig, RiskScore
+        )$.estimate, 2),
+        "    \u2022 Gleason \u22653+4: ",
+        round(roc_auc(
+          data = ResultDF,
+          LowGSig, RiskScore
+        )$.estimate, 2),
+        "    \u2022 Any cancer: ",
+        round(roc_auc(
+          data = ResultDF,
+          is_C, RiskScore
+        )$.estimate, 2)
+      ),
+      x = xlab_title,
+      y = "Density"
+    ) +
+    theme_pubr() +
+    scale_fill_d3(labels = fill_col_labels) +
+    theme(
+      plot.caption = element_text(hjust = 0, size = 14),
+      legend.justification = c(1, 0)
+    )
 }
 # Loop through the model builds and produce a density plot for each.
-RF_Density_Plots <- map2(AllModels, 
-                         c("SoC", "Methylation", "ExoRNA", "ExoMeth"),
-                         function(ModelResult, title){
-                               Model_Plots(ModelResult$Results, 
-                                           RiskScore = "RiskScore", 
-                                           fill_col = "LowGSig", 
-                                           fill_col_title = "Initial biopsy: ",
-                                           fill_col_labels = c("Gleason \u22646", "Gleason \u22653+4"),
-                                           xlab_title = paste0(title, " model risk score"))
-                         })
+RF_Density_Plots <- map2(
+  AllModels,
+  c("SoC", "Methylation", "ExoRNA", "ExoMeth"),
+  function(ModelResult, title) {
+    Model_Plots(ModelResult$Results,
+      RiskScore = "RiskScore",
+      fill_col = "LowGSig",
+      fill_col_title = "Initial biopsy: ",
+      fill_col_labels = c("Gleason \u22646", "Gleason \u22653+4"),
+      xlab_title = paste0(title, " model risk score")
+    )
+  }
+)
 ```
 
 As revealed by the distributions of risk scores and AUC, ExoMeth achieved a better discrimination of Gleason ≥ 3+4 disease from other outcomes when compared to any of the other models (ExoMeth all p < 0.01 bootstrap test, 1,000 resamples, **Figure 3**). The SoC model, whilst returning respectable AUCs, would misclassify more men with indolent disease as warranting further investigation than all other models (**Figure 3A**), for example, to classify 90% of Gleason 7 men correctly, an SoC risk score of `r SoC_Conf_intervals$Conf` would misclassify `r round(SoC_Misclassify * 100)`% of men with less significant disease. The methylation comparator model improves upon SoC, by drawing the risk distribution of Gs 6 men into a more pronounced peak but featured a bimodal risk score distribution extending to higher-risk men; almost 50% of men with Gs ≥ 3+4 have risk scores equal to benign patients (**Figure 3B**). The opposite occurred in the NanoString comparator model exhibited a broad bimodal distribution for lower-risk men (**Figure 3C**).  This discriminatory ability of the ExoMeth model over all comparators was improved when biopsy outcomes are considered as biopsy negative, Gleason 6 or 3+4, or Gleason ≥4+3 (**Supplementary Figure 4**).
 
 ```{r RF ExoMeth Estimation plot}
-#Produce the effect estimations by co-opting DABEST into doing it for us:
+# Produce the effect estimations by co-opting DABEST into doing it for us:
 EstimationData <- suppressWarnings(
-  #Take the ExoMeth Results and select the required vars
-  AllModels[["ExoMeth"]][["Results"]] %>% 
-    select(RiskScore, outcomes, Gleason) %>% 
-    #Mutate the D'Amico Risk Categories to an ordered factor for plotting
-    mutate(Category = factor(Cat, 
-                        levels = c("H", "I", "L", "S", "CB"), 
-                        labels = c("H", "I", "L", "Raised PSA", "NEC"),
-                        ordered = TRUE),
-           GroupedGleason = case_when(
-             Gleason == 0 ~ "NEC",
-             Gleason == 6 ~ "Gleason = 6",
-             Gleason == 7 ~ "Gleason = 3+4",
-             Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3")
-    ) %>% 
-    #Call the dabest function with 1,000 resamples.
-    dabest(x = GroupedGleason, 
-           y = RiskScore, 
-           idx = c("NEC", "Gleason = 6", "Gleason = 3+4", "Gleason \u22654+3"), 
-           reps = 1000) 
-) 
+  # Take the ExoMeth Results and select the required vars
+  AllModels[["ExoMeth"]][["Results"]] %>%
+    select(RiskScore, outcomes, Gleason) %>%
+    # Mutate the D'Amico Risk Categories to an ordered factor for plotting
+    mutate(
+      Category = factor(Cat,
+        levels = c("H", "I", "L", "S", "CB"),
+        labels = c("H", "I", "L", "Raised PSA", "NEC"),
+        ordered = TRUE
+      ),
+      GroupedGleason = case_when(
+        Gleason == 0 ~ "NEC",
+        Gleason == 6 ~ "Gleason = 6",
+        Gleason == 7 ~ "Gleason = 3+4",
+        Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3"
+      )
+    ) %>%
+    # Call the dabest function with 1,000 resamples.
+    dabest(
+      x = GroupedGleason,
+      y = RiskScore,
+      idx = c("NEC", "Gleason = 6", "Gleason = 3+4", "Gleason \u22654+3"),
+      reps = 1000
+    )
+)
 
-# Bootstrap_Results <- EstimationData[["result"]]$bootstraps %>% 
-#   bind_cols() %>% 
+# Bootstrap_Results <- EstimationData[["result"]]$bootstraps %>%
+#   bind_cols() %>%
 #   set_colnames(c("G6", "G7", "G7.5"))
 
-EstimationPlot <- EstimationData %>% 
-  plot(color.column = Category,
-       theme = theme_cowplot(),
-       axes.title.fontsize	= 12, 
-       group.summaries = "mean_sd",
-       rawplot.ylabel = "ExoMeth\n Risk Signature",
-       effsize.ylabel = "Mean ExoMeth Risk Signature\ndifference from NEC samples")
+EstimationPlot <- EstimationData %>%
+  plot(
+    color.column = Category,
+    theme = theme_cowplot(),
+    axes.title.fontsize = 12,
+    group.summaries = "mean_sd",
+    rawplot.ylabel = "ExoMeth\n Risk Signature",
+    effsize.ylabel = "Mean ExoMeth Risk Signature\ndifference from NEC samples"
+  )
 
-#Generate a summary table of the mean differences between labels:
-EstimationSummary <- EstimationData$result %>% 
-  group_by(test_group) %>% 
-  summarise(Text = 
-              paste0(
-                round(difference, 2),
-                " (95% CI: ", 
-                round(bca_ci_low, 2), 
-                " - ", 
-                round(bca_ci_high, 2),
-                ")"))
+# Generate a summary table of the mean differences between labels:
+EstimationSummary <- EstimationData$result %>%
+  group_by(test_group) %>%
+  summarise(
+    Text =
+      paste0(
+        round(difference, 2),
+        " (95% CI: ",
+        round(bca_ci_low, 2),
+        " - ",
+        round(bca_ci_high, 2),
+        ")"
+      )
+  )
 # This is the exact same as above but a surprising amount to just pull out the difference (or lack thereof) between NEC and raised PSA samples
 NEC_RaisedPSAEstimation <- suppressWarnings(
-      AllModels[["ExoMeth"]][["Results"]] %>% 
-            select(RiskScore, outcomes, Gleason) %>% 
-            gather(key = "RiskScore", value = "Value", -outcomes, -Gleason) %>% 
-            filter(Cat %in% c("CB", "S")) %>% 
-            mutate(Category = factor(Cat, 
-                                     levels = c("S", "CB"), 
-                                     labels = c("Raised PSA", "NEC"),
-                                     ordered = TRUE),
-                   GroupedGleason = case_when(
-                         Gleason == 0 ~ "NEC",
-                         Gleason == 6 ~ "Gleason = 6",
-                         Gleason == 7 ~ "Gleason = 3+4",
-                         Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3")
-            ) %>% 
-            filter(RiskScore == "RiskScore") %>% 
-            dabest(x = Category, 
-                   y = Value, 
-                   idx = c("Raised PSA", "NEC"),
-                   reps = 1000)) 
+  AllModels[["ExoMeth"]][["Results"]] %>%
+    select(RiskScore, outcomes, Gleason) %>%
+    gather(key = "RiskScore", value = "Value", -outcomes, -Gleason) %>%
+    filter(Cat %in% c("CB", "S")) %>%
+    mutate(
+      Category = factor(Cat,
+        levels = c("S", "CB"),
+        labels = c("Raised PSA", "NEC"),
+        ordered = TRUE
+      ),
+      GroupedGleason = case_when(
+        Gleason == 0 ~ "NEC",
+        Gleason == 6 ~ "Gleason = 6",
+        Gleason == 7 ~ "Gleason = 3+4",
+        Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3"
+      )
+    ) %>%
+    filter(RiskScore == "RiskScore") %>%
+    dabest(
+      x = Category,
+      y = Value,
+      idx = c("Raised PSA", "NEC"),
+      reps = 1000
+    )
+)
 
-#Produce a nicely formatted string for the differences between NEC and raised PSA samples:
-RaisedPSASummary <- NEC_RaisedPSAEstimation$result %>% 
-  group_by(test_group) %>% 
-  summarise(Text = 
-              paste0(
-                round(difference, 2),
-                " (95% CI: ", 
-                round(bca_ci_low, 2), 
-                " - ", 
-                round(bca_ci_high, 2),
-                ")"))
-
+# Produce a nicely formatted string for the differences between NEC and raised PSA samples:
+RaisedPSASummary <- NEC_RaisedPSAEstimation$result %>%
+  group_by(test_group) %>%
+  summarise(
+    Text =
+      paste0(
+        round(difference, 2),
+        " (95% CI: ",
+        round(bca_ci_low, 2),
+        " - ",
+        round(bca_ci_high, 2),
+        ")"
+      )
+  )
 ```
 
 Resampling of ExoMeth predictions via estimation plots allowed for comparisons of mean ExoMeth signatures between groups (1,000 bias-corrected and accelerated bootstrap resamples, Figure 4). The mean ExoMeth differences between patients with no evidence of cancer were: Gleason 6 = `r EstimationSummary$Text[2]`, Gleason 3+4 = `r EstimationSummary$Text[1]` and Gleason ≥4+3 = `r EstimationSummary$Text[3]`. Notably, there were no differences in ExoMeth risk signatures of patients with a raised PSA but negative for cancer on biopsy and men with no evidence of cancer (mean difference = `r RaisedPSASummary$Text[1]`, **Figure 4**, **Supplementary Figure 5**).
 
 ```{r DCA}
-#Set the parameters for resampling:
+# Set the parameters for resampling:
 set.seed(2903)
 iterations <- 1000
 sample_size <- nrow(ExoMeth_Cohort)
 
-#Need to set up the data a bit to conform by removing the CB men (they don't get biopsies):
-DCA_Data <- map(AllModels, function(df){
-  df$Results %>% 
-    filter(PSA >= 4) %>% 
-    dplyr::select(RiskScore, Cat, Gleason, Sample_ID,
-                  outcomes) %>% 
-    mutate(GleasonFactor = factor(
-      case_when(Gleason == 0 ~ "0",
-                Gleason == 6 ~ "6",
-                Gleason %in% c(7, 7.5) ~ "7",
-                Gleason %in% c(8, 9, 10) ~ "8"),
-      ordered = TRUE),
-      #The rmda package for DCA requires numeric binary variables (bad idea I know), rather than the levels.
+# Need to set up the data a bit to conform by removing the CB men (they don't get biopsies):
+DCA_Data <- map(AllModels, function(df) {
+  df$Results %>%
+    filter(PSA >= 4) %>%
+    dplyr::select(
+      RiskScore, Cat, Gleason, Sample_ID,
+      outcomes
+    ) %>%
+    mutate(
+      GleasonFactor = factor(
+        case_when(
+          Gleason == 0 ~ "0",
+          Gleason == 6 ~ "6",
+          Gleason %in% c(7, 7.5) ~ "7",
+          Gleason %in% c(8, 9, 10) ~ "8"
+        ),
+        ordered = TRUE
+      ),
+      # The rmda package for DCA requires numeric binary variables (bad idea I know), rather than the levels.
       LowGSig = as.numeric(LowGSig) - 1,
       GleaSig = as.numeric(GleaSig) - 1,
-      is_C    = as.numeric(is_C) - 1
+      is_C = as.numeric(is_C) - 1
     )
 })
 
-#Set the rates reported by Martin et al (2018) in the CAP trial. Multiplying by the sample size gives the number of rows to sample:
+# Set the rates reported by Martin et al (2018) in the CAP trial. Multiplying by the sample size gives the number of rows to sample:
 proportions <- list(
-  "0" = 0.6061 * sample_size, #HighPSA NegativeBx
-  "6" = 0.2718 * sample_size, #G6 
-  "7" = 0.0709 * sample_size, #G7 
-  "8" = 0.0512 * sample_size) #G8 
+  "0" = 0.6061 * sample_size, # HighPSA NegativeBx
+  "6" = 0.2718 * sample_size, # G6
+  "7" = 0.0709 * sample_size, # G7
+  "8" = 0.0512 * sample_size
+) # G8
 
-#Loop through each comparator and generate the resampled dataframes:
-DCA_Resamples <- map(DCA_Data, function(df){
-  #ensure each comparator has the same resamples:
-  set.seed(2903) 
-  lapply(seq_len(iterations), function(x){
-    splitstackshape::stratified(indt = df,
-                                group = "GleasonFactor", 
-                                size = proportions, 
-                                replace = TRUE)})
-}) 
-#Create a list of formula objects so they can be mapped through for DCA:
-outcome_formulas <- list(GleaSig = as.formula(GleaSig ~ RiskScore),
-                         LowGSig = as.formula(LowGSig ~ RiskScore),
-                         is_C = as.formula(is_C ~ RiskScore))
-
-#This is a messy one; map through the outcomes above, calculating the net benefit for each iteration and then
-# formatting nicely:
-DCA_Results <- 
-  #For each outcome:
-  future_map(outcome_formulas, function(outcome){
-    #and for each comparator model
-    map2(DCA_Resamples, names(DCA_Resamples), function(comparator, comp_names){
-      #loop through the iterations
-      map_dfc(comparator, function(iteration){
-        #generate a decision curve and pull out the net benny:
-        suppressWarnings(decision_curve(outcome, 
-                       data = iteration, 
-                       fitted.risk = FALSE,
-                       confidence.intervals = NA))$derived.data %>% 
-          select(sNB)
-      }) %>% 
-        #Remove the NA's, calculate the mean over all iterations 
-        na.omit() %>% 
-        rowMeans() %>% 
-        tibble() %>% 
-        mutate(Model = rep(c("RiskScore", "All", "None"), each = 100)) 
-    })    #Add in the names of the different "versions"
-      
+# Loop through each comparator and generate the resampled dataframes:
+DCA_Resamples <- map(DCA_Data, function(df) {
+  # ensure each comparator has the same resamples:
+  set.seed(2903)
+  lapply(seq_len(iterations), function(x) {
+    splitstackshape::stratified(
+      indt = df,
+      group = "GleasonFactor",
+      size = proportions,
+      replace = TRUE
+    )
   })
+})
+# Create a list of formula objects so they can be mapped through for DCA:
+outcome_formulas <- list(
+  GleaSig = as.formula(GleaSig ~ RiskScore),
+  LowGSig = as.formula(LowGSig ~ RiskScore),
+  is_C = as.formula(is_C ~ RiskScore)
+)
 
+# This is a messy one; map through the outcomes above, calculating the net benefit for each iteration and then
+# formatting nicely:
+DCA_Results <-
+  # For each outcome:
+  future_map(outcome_formulas, function(outcome) {
+    # and for each comparator model
+    map2(DCA_Resamples, names(DCA_Resamples), function(comparator, comp_names) {
+      # loop through the iterations
+      map_dfc(comparator, function(iteration) {
+        # generate a decision curve and pull out the net benny:
+        suppressWarnings(decision_curve(outcome,
+          data = iteration,
+          fitted.risk = FALSE,
+          confidence.intervals = NA
+        ))$derived.data %>%
+          select(sNB)
+      }) %>%
+        # Remove the NA's, calculate the mean over all iterations
+        na.omit() %>%
+        rowMeans() %>%
+        tibble() %>%
+        mutate(Model = rep(c("RiskScore", "All", "None"), each = 100))
+    }) # Add in the names of the different "versions"
+  })
 ```
 
 ```{r DCA plot production}
-#Now we can go through the generate results and tidy them up in a nice loop for plotting:
-#For each outcome (GleaSig LowGSig etc)
-DCA_Plot_Data <- map(DCA_Results, function(outcome){
-  #Map through each outcome and model:
-  map2(outcome, c("SoC", "Methylation", "ExoRNA", "ExoMeth"), function(Comparator, outnames){
-    #Create a new tibble with a threshold and the net benefit for treating all/none (0)
-  tibble(
-    Threshold = seq(0, 0.99, by = 0.01),
-    All = filter(Comparator, Model == "All")$.,
-    None = 0,
-    RiskModel = filter(Comparator, Model == "RiskScore")$.) %>% 
-      set_colnames(c("Threshold", "All", "None", outnames)) %>% 
-      gather(value = "Net_Benefit", key = "Comparator",
-           -Threshold)
-  })  %>% 
-    bind_rows %>% 
-    #remove the duplicate values for the All and None lines:
-    distinct %>% 
+# Now we can go through the generate results and tidy them up in a nice loop for plotting:
+# For each outcome (GleaSig LowGSig etc)
+DCA_Plot_Data <- map(DCA_Results, function(outcome) {
+  # Map through each outcome and model:
+  map2(outcome, c("SoC", "Methylation", "ExoRNA", "ExoMeth"), function(Comparator, outnames) {
+    # Create a new tibble with a threshold and the net benefit for treating all/none (0)
+    tibble(
+      Threshold = seq(0, 0.99, by = 0.01),
+      All = filter(Comparator, Model == "All")$.,
+      None = 0,
+      RiskModel = filter(Comparator, Model == "RiskScore")$.
+    ) %>%
+      set_colnames(c("Threshold", "All", "None", outnames)) %>%
+      gather(
+        value = "Net_Benefit", key = "Comparator",
+        -Threshold
+      )
+  }) %>%
+    bind_rows() %>%
+    # remove the duplicate values for the All and None lines:
+    distinct() %>%
     mutate(Comparator = factor(Comparator,
-                               levels = c("All", "None", 
-                                          "SoC", "Methylation", "ExoRNA", "ExoMeth"),
-                               ordered = TRUE))
+      levels = c(
+        "All", "None",
+        "SoC", "Methylation", "ExoRNA", "ExoMeth"
+      ),
+      ordered = TRUE
+    ))
 })
 
 
-DCAPlots <- map2(DCA_Plot_Data, c("Gleason \u22654+3", 
-                                  "Gleason \u22653+4", 
-                                  "any prostate cancer"), 
-                 function(outcome, outcome_name){
-                   ggplot(outcome, aes(x = Threshold, colour = Comparator, y = Net_Benefit)) +
-                     geom_line(size = 1.07) +
-                     theme_cowplot() +
-                     coord_cartesian(ylim = c(-0.05,1), xlim = c(0, 0.3)) +
-                     scale_color_manual(values = c(D3Blue, "DarkGrey",  
-                                                   D3Orange, D3Green, D3Purp, D3Red),
-                                        labels = c("Treat All", "Treat None", 
-                                          "SoC", "Methylation", "ExoRNA", "ExoMeth")) +
-                     labs(x = paste0("Decision threshold for detection of ", outcome_name),
-                          y = "Standardised Net Benefit",
-                          colour = "Comparators") + 
-                     theme(legend.text = element_text(size = 24),
-                           legend.title = element_text(size = 24),
-                           legend.justification = "center") + 
-                     guides(colour = guide_legend(override.aes = list(size = 6), 
-                                                  keyheight = 0.5, 
-                                                  keywidth = 0.1, 
-                                                  default.unit = "inch"))
-                 })
-DCAPlots <- list(DCAPlots[[1]] + theme(legend.position = "none"), 
-                 DCAPlots[[2]] + theme(legend.position = "none"), 
-                 DCAPlots[[3]] + theme(legend.position = "none"), 
-                 Legend = get_legend(DCAPlots[[1]]))
+DCAPlots <- map2(
+  DCA_Plot_Data, c(
+    "Gleason \u22654+3",
+    "Gleason \u22653+4",
+    "any prostate cancer"
+  ),
+  function(outcome, outcome_name) {
+    ggplot(outcome, aes(x = Threshold, colour = Comparator, y = Net_Benefit)) +
+      geom_line(size = 1.07) +
+      theme_cowplot() +
+      coord_cartesian(ylim = c(-0.05, 1), xlim = c(0, 0.3)) +
+      scale_color_manual(
+        values = c(
+          D3Blue, "DarkGrey",
+          D3Orange, D3Green, D3Purp, D3Red
+        ),
+        labels = c(
+          "Treat All", "Treat None",
+          "SoC", "Methylation", "ExoRNA", "ExoMeth"
+        )
+      ) +
+      labs(
+        x = paste0("Decision threshold for detection of ", outcome_name),
+        y = "Standardised Net Benefit",
+        colour = "Comparators"
+      ) +
+      theme(
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24),
+        legend.justification = "center"
+      ) +
+      guides(colour = guide_legend(
+        override.aes = list(size = 6),
+        keyheight = 0.5,
+        keywidth = 0.1,
+        default.unit = "inch"
+      ))
+  }
+)
+DCAPlots <- list(DCAPlots[[1]] + theme(legend.position = "none"),
+  DCAPlots[[2]] + theme(legend.position = "none"),
+  DCAPlots[[3]] + theme(legend.position = "none"),
+  Legend = get_legend(DCAPlots[[1]])
+)
 ```
 
 Decision curve analysis examined the net benefit of adopting ExoMeth in a population of patients suspected with prostate cancer and to have a PSA level suitable to trigger biopsy (≥ 4 ng/mL). The biopsy of men based upon their ExoMeth risk score consistently provided a net benefit over current standards of care across all decision thresholds examined and was the most consistent amongst all comparator models across a range of clinically relevant endpoints for biopsy (**Figure 5**). Of the patients with Gs ≥ 7 disease, 95% had an ExoMeth risk score ≥ 0.283. At a decision threshold of 0.25, ExoMeth could result in up to 66% fewer unnecessary biopsies of men presenting with a suspicion of prostate cancer, without missing substantial numbers of men with aggressive disease, whilst if Gleason ≥ 4+3 were considered the threshold of clinical significance, the same decision threshold of 0.25 could save 79% of men from receiving an unnecessary biopsy (**Figure 6**).
@@ -704,8 +829,9 @@ The research presented in this paper was carried out on the High Performance Com
 ```{r Borutaplot, fig.height=10, fig.width=8}
 BorutaPlot
 ggsave(BorutaPlot,
-       filename =  here("output/fig_out/Figure 1 (Boruta).pdf"),
-       height = 10, width = 8, units = "in")
+  filename = here("output/fig_out/Figure 1 (Boruta).pdf"),
+  height = 10, width = 8, units = "in"
+)
 ```
 
 **Figure 1.** *Boruta analysis of variables available for the training of the ExoMeth model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for predictive modelling (Green). Those variables rejected in every single resample are not shown here, but the full list of inputs for all models can be seen in Supplementary Table 1.*
@@ -715,9 +841,10 @@ ggsave(BorutaPlot,
 ```{r Waterfall_plot, fig.height=6, fig.width=9}
 Waterfall_Plot
 ggsave(Waterfall_Plot,
-       filename = here("output/fig_out/Figure 2 (Waterfall).pdf"),
-       height = 6, width = 9, units = "in",
-       device = cairo_pdf)
+  filename = here("output/fig_out/Figure 2 (Waterfall).pdf"),
+  height = 6, width = 9, units = "in",
+  device = cairo_pdf
+)
 ```
 
 **Figure 2.** _Waterfall plot of the ExoMeth risk score for each patient. Each coloured bar represents an individual patient’s calculated risk score and their true biopsy outcome, coloured according to Gleason score (Gs) . Green - No evidence of cancer, Blue – Gs 6, Orange - Gs 3+4, Red - Gs ≥ 4+3._
@@ -725,16 +852,20 @@ ggsave(Waterfall_Plot,
 #####
 
 ```{r Density_plots, fig.height=9, fig.width=13}
-ggarrange(plotlist = RF_Density_Plots,
-          common.legend = TRUE,
-          labels = "AUTO",
-          font.label = 28,
-          legend = "bottom",
-          ncol = 2,
-          nrow = 2)
-ggsave(filename =  here("output/fig_out/Figure 3 (Density).pdf"),
-       height = 9, width = 13, units = "in",
-       device = cairo_pdf)
+ggarrange(
+  plotlist = RF_Density_Plots,
+  common.legend = TRUE,
+  labels = "AUTO",
+  font.label = 28,
+  legend = "bottom",
+  ncol = 2,
+  nrow = 2
+)
+ggsave(
+  filename = here("output/fig_out/Figure 3 (Density).pdf"),
+  height = 9, width = 13, units = "in",
+  device = cairo_pdf
+)
 ```
 
 **Figure 3.** _Density plots detailing risk score distributions generated from four trained models. Models A to D were trained with different input variables; **A** - SoC clinical risk model, including Age and PSA, **B** - Methylation model, **C** -ExoRNA model and **D** - ExoMeth model, combining the predictors from all three previous models. The full list of variables in each model is available in Table 1. Fill colour shows the risk score distribution of patients with a significant biopsy outcome of Gs ≥ 3+4 (Orange) or Gs ≤ 6 (Blue)._
@@ -743,9 +874,11 @@ ggsave(filename =  here("output/fig_out/Figure 3 (Density).pdf"),
 
 ```{r Estimation_plots, fig.height=6, fig.width=9}
 EstimationPlot
-ggsave(filename =  here("output/fig_out/Figure 4 (Estimation).pdf"),
-       height = 6, width = 9, units = "in",
-       device = cairo_pdf)
+ggsave(
+  filename = here("output/fig_out/Figure 4 (Estimation).pdf"),
+  height = 6, width = 9, units = "in",
+  device = cairo_pdf
+)
 ```
 
 **Figure 4.** *Cumming estimation plot of the ExoMeth risk signature. The top row details individual patients as points, separated according to Gleason score on the x-axis and risk score on the y-axis. Points are coloured according to clinical risk category; NEC - No evidence of cancer, Raised PSA - Raised PSA with negative biopsy, L -D’Amico Low-Risk, I - D’Amico Intermediate Risk, H - D’Amico High-Risk. Gapped vertical lines detail the mean and standard deviation of each group’s risk scores. The lower panel shows the mean differences in risk score of each group, as compared to the NEC samples. Mean differences and 95% confidence interval are displayed as a point estimate and vertical bar respectively, using the sample density distributions calculated from a bias-corrected and accelerated bootstrap analysis from 1,000 resamples.*
@@ -753,14 +886,18 @@ ggsave(filename =  here("output/fig_out/Figure 4 (Estimation).pdf"),
 ##### 
 
 ```{r DCA plots, fig.height=10, fig.width=13}
-ggarrange(plotlist = DCAPlots,
-          labels = c("A", "B", "C", ""),
-          font.label = 32,
-          ncol = 2,
-          nrow = 2)
-ggsave(filename =  here("output/fig_out/Figure 5 (DCA).pdf"),
-       height = 10, width = 13, units = "in",
-       device = cairo_pdf)
+ggarrange(
+  plotlist = DCAPlots,
+  labels = c("A", "B", "C", ""),
+  font.label = 32,
+  ncol = 2,
+  nrow = 2
+)
+ggsave(
+  filename = here("output/fig_out/Figure 5 (DCA).pdf"),
+  height = 10, width = 13, units = "in",
+  device = cairo_pdf
+)
 ```
 
 **Figure 5.** _Decision curve analysis (DCA) plots detailing the standardised net benefit (sNB) of adopting different risk models for aiding the decision to biopsy patients who present with a PSA ≥ 4 ng/mL. The x-axis details the range of risk a clinician or patient may accept before deciding to biopsy. Panels show the sNB based upon the detection of varying levels of disease severity: **A** - detection of Gleason ≥ 4+3, **B** - detection of Gleason ≥ 3+4, **C** - any cancer; **Blue**- biopsy all patients with a PSA >4 ng/mL, **Orange** - biopsy patients according to the SoC model, **Green** - biopsy patients based on the methylation model, **Purple** - biopsy patients based on the ExoRNA model, **Red** - biopsy patients based on a the ExoMeth model. To assess the benefit of adopting these risk models in a non-PSA screened population we used data available from the control arm of the CAP study [@Martin2018]. DCA curves were calculated from 1,000 bootstrap resamples of the available data to match the distribution of disease reported in the CAP trial population. Mean sNB from these resampled DCA results are plotted here. See Methods for full details._
@@ -770,101 +907,128 @@ ggsave(filename =  here("output/fig_out/Figure 5 (DCA).pdf"),
 ```{r Biopsy Reductions, fig.height=10, fig.width=13}
 ######## BIOPSY REDUCTION CALCULATIONS ########
 # Calculated according to:
-DCA_Results <- 
-  #For each outcome:
-  future_map(outcome_formulas, function(outcome){
-    #and for each comparator model
-    map2(DCA_Resamples, names(DCA_Resamples), function(comparator, comp_names){
-      #loop through the iterations
-      map_dfc(comparator, function(iteration){
-        #generate a decision curve and pull out the net benny:
-        suppressWarnings(decision_curve(outcome, 
-                       data = iteration, 
-                       fitted.risk = FALSE,
-                       confidence.intervals = NA))$derived.data %>% 
+DCA_Results <-
+  # For each outcome:
+  future_map(outcome_formulas, function(outcome) {
+    # and for each comparator model
+    map2(DCA_Resamples, names(DCA_Resamples), function(comparator, comp_names) {
+      # loop through the iterations
+      map_dfc(comparator, function(iteration) {
+        # generate a decision curve and pull out the net benny:
+        suppressWarnings(decision_curve(outcome,
+          data = iteration,
+          fitted.risk = FALSE,
+          confidence.intervals = NA
+        ))$derived.data %>%
           select(NB)
-      }) %>% 
-        #Remove the NA's, calculate the mean over all iterations 
-        na.omit() %>% 
-        rowMeans() %>% 
-        tibble() %>% 
-        mutate(Model = rep(c("RiskScore", "All", "None"), each = 100)) 
-    })    #Add in the names of the different "versions"
-      
+      }) %>%
+        # Remove the NA's, calculate the mean over all iterations
+        na.omit() %>%
+        rowMeans() %>%
+        tibble() %>%
+        mutate(Model = rep(c("RiskScore", "All", "None"), each = 100))
+    }) # Add in the names of the different "versions"
   })
 
 
-#Now we can go through the generate results and tidy them up in a nice loop for plotting:
+# Now we can go through the generate results and tidy them up in a nice loop for plotting:
 
-DCA_Plot_Data <- map(DCA_Results, function(outcome){
-  map2(outcome, c("SoC", "Methylation", "ExoRNA", "ExoMeth"), function(Comparator, outnames){
-  tibble(
-    Threshold = seq(0, 0.99, by = 0.01),
-    All = filter(Comparator, Model == "All")$.,
-    None = 0,
-    RiskModel = filter(Comparator, Model == "RiskScore")$.) %>% 
-      set_colnames(c("Threshold", "All", "None", outnames)) %>% 
-      gather(value = "Net_Benefit", key = "Comparator",
-           -Threshold)
-  })  %>% 
-    bind_rows %>% 
-    #remove the duplicate values for the All and None lines:
-    distinct %>% 
+DCA_Plot_Data <- map(DCA_Results, function(outcome) {
+  map2(outcome, c("SoC", "Methylation", "ExoRNA", "ExoMeth"), function(Comparator, outnames) {
+    tibble(
+      Threshold = seq(0, 0.99, by = 0.01),
+      All = filter(Comparator, Model == "All")$.,
+      None = 0,
+      RiskModel = filter(Comparator, Model == "RiskScore")$.
+    ) %>%
+      set_colnames(c("Threshold", "All", "None", outnames)) %>%
+      gather(
+        value = "Net_Benefit", key = "Comparator",
+        -Threshold
+      )
+  }) %>%
+    bind_rows() %>%
+    # remove the duplicate values for the All and None lines:
+    distinct() %>%
     mutate(Comparator = factor(Comparator,
-                               levels = c("All", "None", 
-                                          "SoC", "Methylation", "ExoRNA", "ExoMeth"),
-                               ordered = TRUE))
+      levels = c(
+        "All", "None",
+        "SoC", "Methylation", "ExoRNA", "ExoMeth"
+      ),
+      ordered = TRUE
+    ))
 })
 
-Reduction <- map2(DCA_Plot_Data, c("Gleason \u22654+3", 
-                                   "Gleason \u22653+4", 
-                                   "any prostate cancer"), 
-                  function(outcome, outcome_name){ 
-                    outcome %>% 
-                      spread(value = "Net_Benefit", key = "Comparator") %>% 
-                      mutate(SoCReduction    = (SoC - All)     * 100 / (Threshold / (1 - Threshold)),
-                             MethylationReduction = (Methylation - All)    * 100 / (Threshold / (1 - Threshold)),
-                             ExoRNAReduction  = (ExoRNA - All)    * 100 / (Threshold / (1 - Threshold)),
-                             ExoMethReduction    = (ExoMeth - All) * 100 / (Threshold / (1 - Threshold))) %>% 
-                      select(Threshold, SoCReduction:ExoMethReduction) %>% 
-                      gather(key = "Comparator", value = "Net_Benefit", -Threshold) %>% 
-                      mutate(Net_Benefit = if_else(is.na(Net_Benefit), 0, Net_Benefit)) %>% 
-                      ggplot(aes(x = Threshold, y = Net_Benefit, colour = Comparator)) +
-                      geom_line(size = 1.07) +
-                      geom_hline(yintercept = 0) +
-                      theme_cowplot() +
-                      coord_cartesian(xlim = c(0, 0.6)) +
-                      scale_color_manual(labels = c("ExoMeth",
-                                                    "ExoRNA", "Methylation", "SoC"),
-                                         values = c(D3Red, D3Purp, D3Green, D3Orange)) +
-                      labs(x = paste0("Decision threshold for detection of ", outcome_name),
-                           y = "Net percentage reduction in biopsies",
-                           colour = "Comparators") +
-                      scale_x_continuous(breaks = seq(0, 0.6, 0.1)) +
-                      scale_y_continuous(breaks = seq(0, 100, 10)) +
-                      theme(legend.text = element_text(size = 24),
-                           legend.title = element_text(size = 24),
-                           legend.justification = "center") +
-                     guides(colour = guide_legend(override.aes = list(size = 6), 
-                                                  keyheight = 0.5, 
-                                                  keywidth = 0.1, 
-                                                  default.unit = "inch"))
-                 })
+Reduction <- map2(
+  DCA_Plot_Data, c(
+    "Gleason \u22654+3",
+    "Gleason \u22653+4",
+    "any prostate cancer"
+  ),
+  function(outcome, outcome_name) {
+    outcome %>%
+      spread(value = "Net_Benefit", key = "Comparator") %>%
+      mutate(
+        SoCReduction = (SoC - All) * 100 / (Threshold / (1 - Threshold)),
+        MethylationReduction = (Methylation - All) * 100 / (Threshold / (1 - Threshold)),
+        ExoRNAReduction = (ExoRNA - All) * 100 / (Threshold / (1 - Threshold)),
+        ExoMethReduction = (ExoMeth - All) * 100 / (Threshold / (1 - Threshold))
+      ) %>%
+      select(Threshold, SoCReduction:ExoMethReduction) %>%
+      gather(key = "Comparator", value = "Net_Benefit", -Threshold) %>%
+      mutate(Net_Benefit = if_else(is.na(Net_Benefit), 0, Net_Benefit)) %>%
+      ggplot(aes(x = Threshold, y = Net_Benefit, colour = Comparator)) +
+      geom_line(size = 1.07) +
+      geom_hline(yintercept = 0) +
+      theme_cowplot() +
+      coord_cartesian(xlim = c(0, 0.6)) +
+      scale_color_manual(
+        labels = c(
+          "ExoMeth",
+          "ExoRNA", "Methylation", "SoC"
+        ),
+        values = c(D3Red, D3Purp, D3Green, D3Orange)
+      ) +
+      labs(
+        x = paste0("Decision threshold for detection of ", outcome_name),
+        y = "Net percentage reduction in biopsies",
+        colour = "Comparators"
+      ) +
+      scale_x_continuous(breaks = seq(0, 0.6, 0.1)) +
+      scale_y_continuous(breaks = seq(0, 100, 10)) +
+      theme(
+        legend.text = element_text(size = 24),
+        legend.title = element_text(size = 24),
+        legend.justification = "center"
+      ) +
+      guides(colour = guide_legend(
+        override.aes = list(size = 6),
+        keyheight = 0.5,
+        keywidth = 0.1,
+        default.unit = "inch"
+      ))
+  }
+)
 
-Reduction <- list(Reduction[[1]] + theme(legend.position = "none"), 
-                 Reduction[[2]] + theme(legend.position = "none"), 
-                 Reduction[[3]] + theme(legend.position = "none"), 
-                 Legend = get_legend(Reduction[[1]]))
-                  
-ggarrange(plotlist = Reduction,
-          labels = c("A", "B", "C", ""),
-          font.label = 32,
-          ncol = 2,
-          nrow = 2)
+Reduction <- list(Reduction[[1]] + theme(legend.position = "none"),
+  Reduction[[2]] + theme(legend.position = "none"),
+  Reduction[[3]] + theme(legend.position = "none"),
+  Legend = get_legend(Reduction[[1]])
+)
 
-ggsave(filename =  here("output/fig_out/Figure 6 (Reduction).pdf"),
-       height = 10, width = 13, units = "in",
-       device = cairo_pdf)
+ggarrange(
+  plotlist = Reduction,
+  labels = c("A", "B", "C", ""),
+  font.label = 32,
+  ncol = 2,
+  nrow = 2
+)
+
+ggsave(
+  filename = here("output/fig_out/Figure 6 (Reduction).pdf"),
+  height = 10, width = 13, units = "in",
+  device = cairo_pdf
+)
 ```
 
 **Figure 6.** _Net percentage reduction in biopsies, as calculated by DCA measuring the benfit of adopting different risk models for aiding the decision to biopsy patients who who would otherwise undergo biopsy by current clinical guidelines. The x-axis details the range of accepted risk a clinician or patient may accept before deciding to biopsy. Panels show the reduction in biopsies per 100 patients based upon  the detection of varying levels of disease severity: **A** - detection of Gleason ≥ 4+3, **B** - detection of Gleason ≥ 3+4 and **C** - any cancer. Coloured lines show differing comparator models; **Blue**- biopsy all patients with a PSA >3 ng/mL, **Orange** - biopsy patients by according the to the SoC model, **Green** - biopsy patients based on the methylation model, **Purple** - biopsy patients based on the ExoRNA model, **Red** - biopsy patients based on a the ExoMeth model. To assess the benefit of adopting these risk models in a non-PSA screened population we used data available from the control arm of the CAP study [@Martin2018]. DCA curves were calculated from 1,000 bootstrap resamples of the available data to match the distribution of disease reported in the CAP trial population. Mean sNB from these resampled DCA results are used to calculate the potentially reductions in biopsy rates here. See Methods for full details._
@@ -874,77 +1038,102 @@ ggsave(filename =  here("output/fig_out/Figure 6 (Reduction).pdf"),
 
 
 ```{r Supplementary Boruta, fig.height=20, fig.width=8, include=FALSE}
-#Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-ExoMeth_Features <- ResampledBoruta$ExoMeth %>% 
-  filter(Importance != -Inf) %>% 
-  mutate(Variable = str_remove(Variable, "^m"),
-         Proportion = case_when(Proportion <= 0.05 ~ "<5%",
-                                Proportion <= 0.25 ~ "5 - 25%",
-                                Proportion <= 0.50 ~ "25 - 50%",
-                                Proportion <= 0.75 ~ "50 - 75%",
-                                Proportion <= 0.90 ~ "75 - 90%",
-                                Proportion >= 0.90 ~ ">90%"),
-         Proportion = if_else(str_detect(Variable, "shadow"), 
-                              "Shadow Feature", 
-                              Proportion)) 
+# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+ExoMeth_Features <- ResampledBoruta$ExoMeth %>%
+  filter(Importance != -Inf) %>%
+  mutate(
+    Variable = str_remove(Variable, "^m"),
+    Proportion = case_when(
+      Proportion <= 0.05 ~ "<5%",
+      Proportion <= 0.25 ~ "5 - 25%",
+      Proportion <= 0.50 ~ "25 - 50%",
+      Proportion <= 0.75 ~ "50 - 75%",
+      Proportion <= 0.90 ~ "75 - 90%",
+      Proportion >= 0.90 ~ ">90%"
+    ),
+    Proportion = if_else(str_detect(Variable, "shadow"),
+      "Shadow Feature",
+      Proportion
+    )
+  )
 
 SupplementaryBoruta <- ggplot(ExoMeth_Features, aes(x = reorder(Variable, Importance), y = Importance, fill = FinalDecision)) +
   geom_boxplot() +
   theme_minimal() +
-  theme(legend.position = "bottom",
-        axis.text.y = element_text(
-          face = case_when(
-            levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-            levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% NanoGenes ~ "bold", 
-            levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% ClinVars ~ "bold.italic",
-            TRUE ~ "plain")
-        )) +
-  labs(x = NULL,
-       subtitle = "Boruta-derived importance of available variables in predicting TriSig outcome",
-       fill = "Final Decision:") +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(
+      face = case_when(
+        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% ClinVars ~ "bold.italic",
+        TRUE ~ "plain"
+      )
+    )
+  ) +
+  labs(
+    x = NULL,
+    subtitle = "Boruta-derived importance of available variables in predicting TriSig outcome",
+    fill = "Final Decision:"
+  ) +
   coord_flip() +
   scale_fill_d3(labels = c("Confirmed", "Rejected", "Shadow"))
 ```
  
 ```{r SuppBoruta ClinVars}
-#Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Clin_Imps <- ResampledBoruta$SoC %>% 
-  filter(Importance != -Inf) %>% 
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>% 
-  mutate(Variable = str_remove(Variable, "^m"),
-         Proportion = case_when(Proportion <= 0.05 ~ "<5%",
-                                Proportion <= 0.25 ~ "5 - 25%",
-                                Proportion <= 0.50 ~ "25 - 50%",
-                                Proportion <= 0.75 ~ "50 - 75%",
-                                Proportion <= 0.90 ~ "75 - 90%",
-                                Proportion >= 0.90 ~ ">90%"),
-         Proportion = if_else(str_detect(Variable, "shadow"), 
-                              "Shadow Feature", 
-                              Proportion),
-         Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-         Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-         Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-         Proportion = factor(Proportion, 
-                             levels = c("<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-                                        "Shadow Feature"),
-                             ordered = TRUE))
+# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+Clin_Imps <- ResampledBoruta$SoC %>%
+  filter(Importance != -Inf) %>%
+  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
+  mutate(
+    Variable = str_remove(Variable, "^m"),
+    Proportion = case_when(
+      Proportion <= 0.05 ~ "<5%",
+      Proportion <= 0.25 ~ "5 - 25%",
+      Proportion <= 0.50 ~ "25 - 50%",
+      Proportion <= 0.75 ~ "50 - 75%",
+      Proportion <= 0.90 ~ "75 - 90%",
+      Proportion >= 0.90 ~ ">90%"
+    ),
+    Proportion = if_else(str_detect(Variable, "shadow"),
+      "Shadow Feature",
+      Proportion
+    ),
+    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
+    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
+    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
+    Proportion = factor(Proportion,
+      levels = c(
+        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
+        "Shadow Feature"
+      ),
+      ordered = TRUE
+    )
+  )
 
 ggplot(Clin_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
-  theme(legend.position = "bottom",
-        axis.text.y = element_text(
-          face = case_when(
-            levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-            levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% NanoGenes ~ "bold", 
-            levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% ClinVars ~ "bold.italic",
-            TRUE ~ "plain")
-        )) +
-  guides(fill = guide_legend(title = 'Proportion of resamples "Confirmed":',
-                             title.position = "top",
-                             title.hjust = 0.5)) +
-  labs(x = NULL,
-       y = "Normalised permutation importance") +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(
+      face = case_when(
+        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        TRUE ~ "plain"
+      )
+    )
+  ) +
+  guides(fill = guide_legend(
+    title = 'Proportion of resamples "Confirmed":',
+    title.position = "top",
+    title.hjust = 0.5
+  )) +
+  labs(
+    x = NULL,
+    y = "Normalised permutation importance"
+  ) +
   coord_flip() +
   scale_fill_manual(values = c(D3Blue, D3Red, D3Purp))
 ```
@@ -952,44 +1141,59 @@ ggplot(Clin_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = 
  **Supplementary Figure 1.** *Boruta analysis of variables available for the training of the SoC model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Variable origins are denoted by font; clinical variables are italicised and emboldened. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for training predictive models.*
  
 ```{r SuppBoruta_MethyVars}
-#Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Meth_Imps <- ResampledBoruta$Methylation %>% 
-  filter(Importance != -Inf) %>% 
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>% 
-  mutate(Variable = str_remove(Variable, "^m"),
-         Proportion = case_when(Proportion <= 0.05 ~ "<5%",
-                                Proportion <= 0.25 ~ "5 - 25%",
-                                Proportion <= 0.50 ~ "25 - 50%",
-                                Proportion <= 0.75 ~ "50 - 75%",
-                                Proportion <= 0.90 ~ "75 - 90%",
-                                Proportion >= 0.90 ~ ">90%"),
-         Proportion = if_else(str_detect(Variable, "shadow"), 
-                              "Shadow Feature", 
-                              Proportion),
-         Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-         Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-         Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-         Proportion = factor(Proportion, 
-                             levels = c("<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-                                        "Shadow Feature"),
-                             ordered = TRUE))
+# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+Meth_Imps <- ResampledBoruta$Methylation %>%
+  filter(Importance != -Inf) %>%
+  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
+  mutate(
+    Variable = str_remove(Variable, "^m"),
+    Proportion = case_when(
+      Proportion <= 0.05 ~ "<5%",
+      Proportion <= 0.25 ~ "5 - 25%",
+      Proportion <= 0.50 ~ "25 - 50%",
+      Proportion <= 0.75 ~ "50 - 75%",
+      Proportion <= 0.90 ~ "75 - 90%",
+      Proportion >= 0.90 ~ ">90%"
+    ),
+    Proportion = if_else(str_detect(Variable, "shadow"),
+      "Shadow Feature",
+      Proportion
+    ),
+    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
+    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
+    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
+    Proportion = factor(Proportion,
+      levels = c(
+        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
+        "Shadow Feature"
+      ),
+      ordered = TRUE
+    )
+  )
 
 ggplot(Meth_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
-  theme(legend.position = "bottom",
-        axis.text.y = element_text(
-          face = case_when(
-            levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-            levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% NanoGenes ~ "bold", 
-            levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% ClinVars ~ "bold.italic",
-            TRUE ~ "plain")
-        )) +
-  guides(fill = guide_legend(title = 'Proportion of resamples "Confirmed":',
-                             title.position = "top",
-                             title.hjust = 0.5)) +
-  labs(x = NULL,
-       y = "Normalised permutation importance") +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(
+      face = case_when(
+        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        TRUE ~ "plain"
+      )
+    )
+  ) +
+  guides(fill = guide_legend(
+    title = 'Proportion of resamples "Confirmed":',
+    title.position = "top",
+    title.hjust = 0.5
+  )) +
+  labs(
+    x = NULL,
+    y = "Normalised permutation importance"
+  ) +
   coord_flip() +
   scale_fill_manual(values = c(D3Red, D3Purp))
 ```
@@ -997,45 +1201,60 @@ ggplot(Meth_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = 
   **Supplementary Figure 2.** *Boruta analysis of variables available for the training of the Methylation model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Variable origins are denoted by font; methylation variables are italicised. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for training predictive models.*
  
 ```{r SuppBoruta_NanoVars, fig.height=16, fig.width=7}
-#Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Nano_Imps <- ResampledBoruta$ExoRNA %>% 
-  filter(Importance != -Inf) %>% 
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>% 
-  mutate(Variable = str_remove(Variable, "^m"),
-         Proportion = case_when(Proportion <= 0.05 ~ "<5%",
-                                Proportion <= 0.25 ~ "5 - 25%",
-                                Proportion <= 0.50 ~ "25 - 50%",
-                                Proportion <= 0.75 ~ "50 - 75%",
-                                Proportion <= 0.90 ~ "75 - 90%",
-                                Proportion >= 0.90 ~ ">90%"),
-         Proportion = if_else(str_detect(Variable, "shadow"), 
-                              "Shadow Feature", 
-                              Proportion),
-         Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-         Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-         Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-         Variable = str_replace(Variable, "ERG3", "ERG"),
-         Proportion = factor(Proportion, 
-                             levels = c("<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-                                        "Shadow Feature"),
-                             ordered = TRUE))
+# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+Nano_Imps <- ResampledBoruta$ExoRNA %>%
+  filter(Importance != -Inf) %>%
+  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
+  mutate(
+    Variable = str_remove(Variable, "^m"),
+    Proportion = case_when(
+      Proportion <= 0.05 ~ "<5%",
+      Proportion <= 0.25 ~ "5 - 25%",
+      Proportion <= 0.50 ~ "25 - 50%",
+      Proportion <= 0.75 ~ "50 - 75%",
+      Proportion <= 0.90 ~ "75 - 90%",
+      Proportion >= 0.90 ~ ">90%"
+    ),
+    Proportion = if_else(str_detect(Variable, "shadow"),
+      "Shadow Feature",
+      Proportion
+    ),
+    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
+    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
+    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
+    Variable = str_replace(Variable, "ERG3", "ERG"),
+    Proportion = factor(Proportion,
+      levels = c(
+        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
+        "Shadow Feature"
+      ),
+      ordered = TRUE
+    )
+  )
 
 ggplot(Nano_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
-  theme(legend.position = "bottom",
-        axis.text.y = element_text(
-          face = case_when(
-            levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-            levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% c(NanoGenes, "ERG exons 4-5", "ERG exons 6-7") ~ "bold", 
-            levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% ClinVars ~ "bold.italic",
-            TRUE ~ "plain")
-        )) +
-  guides(fill = guide_legend(title = 'Proportion of resamples "Confirmed":',
-                             title.position = "top",
-                             title.hjust = 0.5)) +
-  labs(x = NULL,
-       y = "Normalised permutation importance") +
+  theme(
+    legend.position = "bottom",
+    axis.text.y = element_text(
+      face = case_when(
+        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% c(NanoGenes, "ERG exons 4-5", "ERG exons 6-7") ~ "bold",
+        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        TRUE ~ "plain"
+      )
+    )
+  ) +
+  guides(fill = guide_legend(
+    title = 'Proportion of resamples "Confirmed":',
+    title.position = "top",
+    title.hjust = 0.5
+  )) +
+  labs(
+    x = NULL,
+    y = "Normalised permutation importance"
+  ) +
   coord_flip() +
   scale_fill_d3()
 ```
@@ -1046,41 +1265,54 @@ ggplot(Nano_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = 
 ```{r RF TriSig Density plots, fig.height=9, fig.width=13}
 # Loop through the model builds and produce a density plot for each.
 
-TriSig_RF_Density_Plots <- map2(AllModels, 
-                                c("SoC", "Methylation", "ExoRNA", "ExoMeth"),
-                                function(ModelResult, title){
-                                  suppressMessages(Model_Plots(ModelResult$Results, 
-                                                               RiskScore = "RiskScore", 
-                                                               fill_col = "TriSig", 
-                                                               fill_col_title = "Initial biopsy:", 
-                                                               fill_col_labels = c("NEC", 
-                                                                                   "Mostly Gleason 3", 
-                                                                                   "Mostly Gleason 4"),
-                                                               xlab_title = paste0(title, " model risk score")) +
-                                                     scale_fill_manual(values = c(D3Green, D3Orange, D3Purp),
-                                                                       labels = c("NEC", 
-                                                                                  "Predominantly Gleason 3",
-                                                                                  "Predominantly Gleason 4")))
-                                })
-#Plot them out with ggpubr, stripping the legends out and plonking one at the bottom 
-ggarrange(plotlist = TriSig_RF_Density_Plots,
-          common.legend = TRUE,
-          labels = "AUTO",
-          font.label = 28,
-          legend = "bottom",
-          ncol = 2,
-          nrow = 2)
+TriSig_RF_Density_Plots <- map2(
+  AllModels,
+  c("SoC", "Methylation", "ExoRNA", "ExoMeth"),
+  function(ModelResult, title) {
+    suppressMessages(Model_Plots(ModelResult$Results,
+      RiskScore = "RiskScore",
+      fill_col = "TriSig",
+      fill_col_title = "Initial biopsy:",
+      fill_col_labels = c(
+        "NEC",
+        "Mostly Gleason 3",
+        "Mostly Gleason 4"
+      ),
+      xlab_title = paste0(title, " model risk score")
+    ) +
+      scale_fill_manual(
+        values = c(D3Green, D3Orange, D3Purp),
+        labels = c(
+          "NEC",
+          "Predominantly Gleason 3",
+          "Predominantly Gleason 4"
+        )
+      ))
+  }
+)
+# Plot them out with ggpubr, stripping the legends out and plonking one at the bottom
+ggarrange(
+  plotlist = TriSig_RF_Density_Plots,
+  common.legend = TRUE,
+  labels = "AUTO",
+  font.label = 28,
+  legend = "bottom",
+  ncol = 2,
+  nrow = 2
+)
 ```
 
 **Supplementary Figure 4.** _Density plots detailing risk score distributions generated from four trained models. Models A to D were trained with different input variables; **A** - SoC clinical risk model, including Age and PSA, **B** - Methylation model, **C** -ExoRNA model and **D** - ExoMeth model, combining the predictors from all three previous models. The full list of variables in each model is available in Table 1. Fill colour shows the risk score distribution of patients with with respect to biopsy outcome: No evidence of cancer (Blue), Gleason 6 or 3+4 (Orange), Gleason ≥ 4+3 (Green)._
 
 ```{r Supplementary Estimation, fig.height=5, fig.width=9}
-NEC_RaisedPSAEstimation %>% 
-      plot(theme = theme_cowplot,
-           axes.title.fontsize	= 12, 
-           group.summaries = "mean_sd",
-           rawplot.ylabel = "ExoMeth\n Risk Signature",
-           effsize.ylabel = "Mean ExoMeth Risk Signature\ndifference from NEC samples")
+NEC_RaisedPSAEstimation %>%
+  plot(
+    theme = theme_cowplot,
+    axes.title.fontsize = 12,
+    group.summaries = "mean_sd",
+    rawplot.ylabel = "ExoMeth\n Risk Signature",
+    effsize.ylabel = "Mean ExoMeth Risk Signature\ndifference from NEC samples"
+  )
 ```
 
 **Supplementary Figure 5** *Cumming estimation plot of the ExoMeth risk signatures in No evidence of cancer (NEC) and raised PSA, negative biopsy samples. The left panel details individual patients as points with ExoMeth risk score on the y-axis. Points are coloured according to clinical risk category; NEC - No evidence of cancer, Raised PSA - Raised PSA with negative biopsy. The right panel shows the mean differences in risk score between each NEC and Raised PSA samples. Mean differences and 95% confidence interval are displayed as a point estimate and vertical bar respectively, using the sample density distributions calculated from a bias-corrected and accelerated bootstrap analysis from 1,000 resamples.*
@@ -1088,30 +1320,41 @@ NEC_RaisedPSAEstimation %>%
  
 **Supplementary Table 1.** _List of all features available for selection as input variables for each model prior to boostrapped Boruta feature selection._
 ```{r SupplementryTable}
-AllVars <- list(SoC = ClinVars, 
-                Methylation = MethProbes, 
-                ExoRNA = NanoGenes, 
-                EpiPUR = c(ClinVars, MethProbes, NanoGenes))
+AllVars <- list(
+  SoC = ClinVars,
+  Methylation = MethProbes,
+  ExoRNA = NanoGenes,
+  EpiPUR = c(ClinVars, MethProbes, NanoGenes)
+)
 
 
-AllFeatures <- map_dfc(AllVars, function(variables){
-      append(variables,
-             rep("", 
-                 max(map_dbl(AllVars, length)) - length(variables))) %>% 
-            #Strip the "m" methylation identifier (is ugly)
-            str_remove("^m") 
-}) %>% 
-  set_colnames(c("SoC", "Methylation", "ExoRNA", "ExoMeth")) %>% 
-      formattable(
-        #Add catches to add bold text formatting when a value is in the ExoMeth column.
-            list(SoC = formatter("span",
-                                      style = ~ style("font-weight" = ifelse(SoC %in% ExoMeth, "bold", "normal"))),
-                 Methylation = formatter("span",
-                                         style = ~ style("font-weight" = ifelse(Methylation %in% ExoMeth, "bold", "normal"))),
-                 ExoRNA = formatter("span",
-                                        style = ~ style("font-weight" = ifelse(ExoRNA %in% ExoMeth, "bold", "normal")))
-            ))
-format_table(AllFeatures,format = "markdown")
+AllFeatures <- map_dfc(AllVars, function(variables) {
+  append(
+    variables,
+    rep(
+      "",
+      max(map_dbl(AllVars, length)) - length(variables)
+    )
+  ) %>%
+    # Strip the "m" methylation identifier (is ugly)
+    str_remove("^m")
+}) %>%
+  set_colnames(c("SoC", "Methylation", "ExoRNA", "ExoMeth")) %>%
+  formattable(
+    # Add catches to add bold text formatting when a value is in the ExoMeth column.
+    list(
+      SoC = formatter("span",
+        style = ~ style("font-weight" = ifelse(SoC %in% ExoMeth, "bold", "normal"))
+      ),
+      Methylation = formatter("span",
+        style = ~ style("font-weight" = ifelse(Methylation %in% ExoMeth, "bold", "normal"))
+      ),
+      ExoRNA = formatter("span",
+        style = ~ style("font-weight" = ifelse(ExoRNA %in% ExoMeth, "bold", "normal"))
+      )
+    )
+  )
+format_table(AllFeatures, format = "markdown")
 ```
 
 # References
