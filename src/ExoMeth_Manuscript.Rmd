@@ -117,20 +117,24 @@ set.seed(2903)
 
 # For ease of computation the resampled Boruta has been precomputetd for you using the UEA HPC. However, if you wish
 # to recompute, or would like to tweak the analyses you can uncomment the below line to run the code. Additionally
-# it's possible to run the code in isolation.
+# it's possible to run the script in isolation as it calls all the data itself.
 #source(here("src/HPC_Boruta.R"))
 
 # Load in the pre-computed Boruta resamples for analysis:
 ResampledBoruta <- readRDS(here::here("output/data_out/ResampledBoruta.RDS"))
 
 # Extract the important variables for each set of input variables and produce a list for later use:
-ConfirmedVariables <- map(ResampledBoruta, function(CV_Bor){
-  CV_Bor %>% 
-    filter(FinalDecision == "Confirmed") %>% 
-    select(Variable) %>% 
-    distinct() %>% 
-    as_vector()
-}) %>% 
+ConfirmedVariables <- map(
+  #Loop through each resample of the Boruta runs
+  ResampledBoruta, function(Single_Boruta){
+    Single_Boruta %>% 
+      #Filter only "confirmed" variables
+      filter(FinalDecision == "Confirmed") %>% 
+      #Select only the variables and make a distinct list of them
+      select(Variable) %>% 
+      distinct() %>% 
+      as_vector()
+  }) %>% 
   set_names(c("SoC", "Methylation", "ExoRNA", "ExoMeth"))
 ```
 
@@ -150,11 +154,11 @@ Models were trained on a modified continuous label, based by binning on biopsy o
 
 #Easiest to define a function that can store the model and oob predictions for a random forest:
 RFModelHelper <- function(Variables, 
-                            Dataframe = ExoMeth_Cohort,
+                          Dataframe = ExoMeth_Cohort,
                           #Use the continuous version of the TriSig label:
-                            TrainingLabel = as.numeric(ExoMeth_Cohort$TriSig) - 1,
-                            ModelName = "RiskScore",
-                            seed = 2903){
+                          TrainingLabel = as.numeric(ExoMeth_Cohort$TriSig) - 1,
+                          ModelName = "RiskScore",
+                          seed = 2903){
   set.seed(seed)
   # Train the RF model (suppress the warning because less than 5 response levels
   # in a regression makes it suggest classification)
@@ -214,6 +218,7 @@ ExoMeth_Cohort %>%
                                                   levels = c("small", "medium", "large", "unknown"), 
                                                   labels = c("Small, n (%)", "Medium, n (%)", "Large, n (%)", "Unknown, n (%)"),
                                                   ordered = TRUE),
+         #For some reason this doesn't actually order them in the final table...
          'Gleason Score:' = factor(case_when(Gleason == 0 ~ "0, n (%)",
                                              Gleason == 6 ~ "6, n (%)",
                                              Gleason == 7 ~ "3+4, n (%)",
@@ -232,27 +237,31 @@ ExoMeth_Cohort %>%
 
 ```{r Boruta}
 #Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
+
 ExoMeth_Features <- ResampledBoruta$ExoMeth %>% 
   filter(Importance != -Inf) %>% 
   filter(Decision %in% c("Confirmed", "Tentative", NA)) %>% 
   mutate(Variable = str_remove(Variable, "^m"),
+         #Bind the proportions so that they can be filled in nicely on a plot:
          Proportion = case_when(Proportion <= 0.05 ~ "<5%",
                                 Proportion <= 0.25 ~ "5 - 25%",
                                 Proportion <= 0.50 ~ "25 - 50%",
                                 Proportion <= 0.75 ~ "50 - 75%",
                                 Proportion <= 0.90 ~ "75 - 90%",
                                 Proportion >= 0.90 ~ ">90%"),
+         #Mutate the Shadow feature strings to look nice:
          Proportion = if_else(str_detect(Variable, "shadow"), 
                               "Shadow Feature", 
                               Proportion),
          Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
          Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
          Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
+         #Make sure Proportion is an ordered factor.
          Proportion = factor(Proportion, 
                              levels = c("<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
                                         "Shadow Feature"),
                              ordered = TRUE))
-
+#ExoMeth_Features is used multiple times below so the plot here is done in two parts.
 BorutaPlotData <- ExoMeth_Features %>% 
   #Add a flag to the methylation/clinical variables
   mutate(
@@ -262,7 +271,7 @@ BorutaPlotData <- ExoMeth_Features %>%
       TRUE ~ Variable),
     Variable = str_replace(Variable, "ERG3", "ERG"))
 
-#For some reason the above cannot be passed to the font face argument so have to use the intemediary...
+# Can now produce the Boruta plot:
 BorutaPlot <- ggplot(BorutaPlotData, 
                      aes(x = reorder(Variable, Importance), 
                          y = Importance, fill = as.factor(Proportion))) +
@@ -316,14 +325,14 @@ format_table(SelectedFeatures,format = "markdown")
 
 #Take the results dataframe and make a density plot that is filled according to a chosen label
 Waterfall_Plot <- AllModels$ExoMeth$Results %>% 
-  mutate(WHOI = factor(
+  mutate(GroupedGleason = factor(
     case_when(Gleason == 0 ~ "No Evidence of Cancer",
               Gleason == 6 ~ "Gleason = 6",
               Gleason == 7 ~ "Gleason = 3+4",
               Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3"),
     levels = c("No Evidence of Cancer", "Gleason = 6", "Gleason = 3+4", "Gleason \u22654+3"),
     ordered = TRUE)) %>% 
-  ggplot(aes(x = fct_reorder(Sample_ID, RiskScore), y = RiskScore, fill = WHOI)) +
+  ggplot(aes(x = fct_reorder(Sample_ID, RiskScore), y = RiskScore, fill = GroupedGleason)) +
   geom_bar(stat = "identity") +
   theme_cowplot() +
   theme(axis.text.x = element_blank(),
@@ -336,7 +345,7 @@ Waterfall_Plot <- AllModels$ExoMeth$Results %>%
   scale_fill_manual(values = c("#2CA02CFF", "#1F77B4FF", "#FF7F0EFF", "#D62728FF"))
 
 #### Calculate Odds ratios
-#This uses the MASS package and polr to get the odds ratio for a "unit" change in EpiPUR compared to Gleason outcome.
+#This uses the MASS package and polr to get the odds ratio for a "unit" change in EpiPUR compared to Gleason outcome (sub-optimal - assumes linearity and continuous outcome really...).
 ExoMeth_clm <- AllModels$ExoMeth$Results %>% 
     mutate(RiskScore = RiskScore *10,
            Gleason = factor(Gleason, 
@@ -345,7 +354,8 @@ ExoMeth_clm <- AllModels$ExoMeth$Results %>%
   MASS::polr(Gleason ~ RiskScore, data = ., Hess = TRUE)
 
 #Ordinal logistic regression returns coefficients scaled in terms of logs and are awkward to interpret.
-# Exponentiating them gives us the odds ratio for a "unit" (0.1) change in Risk Score:
+# Exponentiating them gives us the odds ratio for a "unit" (0.1) change in Risk Score.
+# Here we manipulate the output to give a nice string we can use in-line.
 OddsRatio <- suppressMessages(paste0("Proportional odds ratio = ",
       round(exp(coef(ExoMeth_clm)), 2), 
       "per 0.1 ExoMeth increase, 95% CI: ",
@@ -366,10 +376,11 @@ SoC_Conf_intervals <- AllModels[["SoC"]][["Results"]] %>%
   filter(LowGSig == "Yes") %>% 
   summarise(Conf = round(quantile(RiskScore, 0.1), 3))
 
+# Now find the number of patients the SoC model would misclassify at that score:
 SoC_Misclassify <- AllModels[["SoC"]][["Results"]] %>% 
   filter(LowGSig == "No") %>% 
-  tally(RiskScore >= SoC_Conf_intervals$Conf) / nrow(AllModels[["SoC"]][["Results"]] %>% 
-  filter(LowGSig == "No"))
+  tally(RiskScore >= SoC_Conf_intervals$Conf) / 
+  nrow(AllModels[["SoC"]][["Results"]] %>% filter(LowGSig == "No"))
 ```
 
 As ExoMeth Risk Score (range 0-1) increased, the likelihood of high-grade disease being detected on biopsy was significantly greater (`r OddsRatio`; ordinal logistic regression, **Figure 2**). The median ExoMeth risk score was `r round(median(MetsPredictions / 2), 2)` for metastatic patients (*n* = `r nrow(MetsSamples)`). These were excluded from model training and can be considered as a positive control. One metastatic sample had a lower than expected ExoMeth score of `r round(min(MetsPredictions / 2), 2)`: where no methylation was quantified for this sample, which may reflect a technical failure of the sample.
@@ -419,7 +430,7 @@ ExoMeth was superior to all other models, returning an AUC of `r str_replace(AUC
 
 
 ```{r RF model Density plots, echo=FALSE,message=FALSE}
-# Make a decent helper function to plot out the predictions for a given model:
+# Make a decent helper function to plot out the predictions for a given model as a density:
 Model_Plots <- function(ResultDF, 
                         RiskScore = "RiskScore", 
                         xlab_title = "Risk Signature",
@@ -465,23 +476,25 @@ RF_Density_Plots <- map2(AllModels,
 As revealed by the distributions of risk scores and AUC, ExoMeth achieved a better discrimination of Gleason ≥ 3+4 disease from other outcomes when compared to any of the other models (ExoMeth all p < 0.01 bootstrap test, 1,000 resamples, **Figure 3**). The SoC model, whilst returning respectable AUCs, would misclassify more men with indolent disease as warranting further investigation than all other models (**Figure 3A**), for example, to classify 90% of Gleason 7 men correctly, an SoC risk score of `r SoC_Conf_intervals$Conf` would misclassify `r round(SoC_Misclassify * 100)`% of men with less significant disease. The methylation comparator model improves upon SoC, by drawing the risk distribution of Gs 6 men into a more pronounced peak but featured a bimodal risk score distribution extending to higher-risk men; almost 50% of men with Gs ≥ 3+4 have risk scores equal to benign patients (**Figure 3B**). The opposite occurred in the NanoString comparator model exhibited a broad bimodal distribution for lower-risk men (**Figure 3C**).  This discriminatory ability of the ExoMeth model over all comparators was improved when biopsy outcomes are considered as biopsy negative, Gleason 6 or 3+4, or Gleason ≥4+3 (**Supplementary Figure 4**).
 
 ```{r RF ExoMeth Estimation plot}
+#Produce the effect estimations by co-opting DABEST into doing it for us:
 EstimationData <- suppressWarnings(
+  #Take the ExoMeth Results and select the required vars
   AllModels[["ExoMeth"]][["Results"]] %>% 
     select(RiskScore, outcomes, Gleason) %>% 
-    gather(key = "RiskScore", value = "Value", -outcomes, -Gleason) %>% 
+    #Mutate the D'Amico Risk Categories to an ordered factor for plotting
     mutate(Category = factor(Cat, 
                         levels = c("H", "I", "L", "S", "CB"), 
                         labels = c("H", "I", "L", "Raised PSA", "NEC"),
                         ordered = TRUE),
-           WHOI = case_when(
+           GroupedGleason = case_when(
              Gleason == 0 ~ "NEC",
              Gleason == 6 ~ "Gleason = 6",
              Gleason == 7 ~ "Gleason = 3+4",
              Gleason %in% c(7.5, 8, 9, 10) ~ "Gleason \u22654+3")
     ) %>% 
-    filter(RiskScore == "RiskScore") %>% 
-    dabest(x = WHOI, 
-           y = Value, 
+    #Call the dabest function with 1,000 resamples.
+    dabest(x = GroupedGleason, 
+           y = RiskScore, 
            idx = c("NEC", "Gleason = 6", "Gleason = 3+4", "Gleason \u22654+3"), 
            reps = 1000) 
 ) 
@@ -519,7 +532,7 @@ NEC_RaisedPSAEstimation <- suppressWarnings(
                                      levels = c("S", "CB"), 
                                      labels = c("Raised PSA", "NEC"),
                                      ordered = TRUE),
-                   WHOI = case_when(
+                   GroupedGleason = case_when(
                          Gleason == 0 ~ "NEC",
                          Gleason == 6 ~ "Gleason = 6",
                          Gleason == 7 ~ "Gleason = 3+4",
@@ -531,6 +544,7 @@ NEC_RaisedPSAEstimation <- suppressWarnings(
                    idx = c("Raised PSA", "NEC"),
                    reps = 1000)) 
 
+#Produce a nicely formatted string for the differences between NEC and raised PSA samples:
 RaisedPSASummary <- NEC_RaisedPSAEstimation$result %>% 
   group_by(test_group) %>% 
   summarise(Text = 
@@ -564,18 +578,20 @@ DCA_Data <- map(AllModels, function(df){
                 Gleason %in% c(7, 7.5) ~ "7",
                 Gleason %in% c(8, 9, 10) ~ "8"),
       ordered = TRUE),
+      #The rmda package for DCA requires numeric binary variables (bad idea I know), rather than the levels.
       LowGSig = as.numeric(LowGSig) - 1,
       GleaSig = as.numeric(GleaSig) - 1,
       is_C    = as.numeric(is_C) - 1
     )
 })
 
-#Set the rates reported by Martin et al in the CAP trial. Multiplying by the sample size gives the number of rows to sample:
+#Set the rates reported by Martin et al (2018) in the CAP trial. Multiplying by the sample size gives the number of rows to sample:
 proportions <- list(
   "0" = 0.6061 * sample_size, #HighPSA NegativeBx
   "6" = 0.2718 * sample_size, #G6 
   "7" = 0.0709 * sample_size, #G7 
   "8" = 0.0512 * sample_size) #G8 
+
 #Loop through each comparator and generate the resampled dataframes:
 DCA_Resamples <- map(DCA_Data, function(df){
   #ensure each comparator has the same resamples:
@@ -1087,6 +1103,7 @@ AllFeatures <- map_dfc(AllVars, function(variables){
 }) %>% 
   set_colnames(c("SoC", "Methylation", "ExoRNA", "ExoMeth")) %>% 
       formattable(
+        #Add catches to add bold text formatting when a value is in the ExoMeth column.
             list(SoC = formatter("span",
                                       style = ~ style("font-weight" = ifelse(SoC %in% ExoMeth, "bold", "normal"))),
                  Methylation = formatter("span",
