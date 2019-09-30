@@ -13,4 +13,3 @@ write_compendium_description(package = "The Framework: ExoMeth",
 write_dockerfile(maintainer = "Shea Connell")
 
 generate_badge()
-

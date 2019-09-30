@@ -268,18 +268,49 @@ BorutaPlot <- ggplot(BorutaPlotData,
       "plain", "italic"
     ))
   ) +
-  guides(
-    fill = guide_legend(
-      title = 'Proportion of resamples "Confirmed":',
-      title.position = "top",
-      title.hjust = 0.5
-    )) +
+  guides(fill = guide_legend(
+    title = 'Proportion of resamples "Confirmed":',
+    title.position = "top",
+    title.hjust = 0.5
+  )) +
   labs(
     x = NULL,
     y = "Normalised permutation importance"
   ) +
   coord_flip() +
   scale_fill_manual(values = c(D3Red, D3Orange, D3Blue, D3Green, D3Purp))
+
+SuppBorutaPlots <- map(FeatureImportances, function(ComparatorImportances){
+  ggplot(ComparatorImportances, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
+    geom_boxplot(outlier.alpha = 0.5) +
+    theme_pubclean() +
+    theme(
+      legend.position = "bottom",
+      axis.text.y = element_text(
+        face = case_when(
+          levels(reorder(ComparatorImportances$Variable, 
+                         ComparatorImportances$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+          levels(reorder(ComparatorImportances$Variable, 
+                         ComparatorImportances$Importance)) %in% NanoGenes ~ "bold",
+          levels(reorder(ComparatorImportances$Variable, 
+                         ComparatorImportances$Importance)) %in% ClinVars ~ "bold.italic",
+          TRUE ~ "plain"
+        )
+      )
+    ) +
+    guides(fill = guide_legend(
+      title = 'Proportion of resamples "Confirmed":',
+      title.position = "top",
+      title.hjust = 0.5
+    )) +
+    labs(
+      x = NULL,
+      y = "Normalised permutation importance"
+    ) +
+    coord_flip()
+})
+
+
 ```
 
 Using a robust feature selection framework four models were produced in total; a standard of care (SoC) model using only clinical information (age and PSA), a model using only methylation data (Methylation, 6 genes), a model using only cf-RNA information (ExoRNA, 12 gene-probes) and the integrated model, deemed ExoMeth (16 variables) (Table 2). The ExoMeth model is a multivariable risk prediction model incorporating clinical, methylation and cf-RNA variables. When the resampling strategy was applied for feature reduction using Boruta, 16 variables were selected for the ExoMeth model. Each of the retained variables were positively selected in every resample and notably included information from clinical, methylation and cf-RNA variables (Figure 1). Full resample-derived Boruta variable importances for the SoC, Methylation and ExoRNA comparator models can be seen in Supplementary Figures 1 – 3, respectively.
@@ -612,6 +643,8 @@ Resampling of ExoMeth predictions via estimation plots allowed for comparisons o
 ```{r DCA}
 # Set the parameters for resampling:
 set.seed(2903)
+### THIS HAS BEEN SET AT 100 FOR EASE OF BINDER COMPUTATION ###
+# It can be set back to 1000 to get the *exact* figures supplied in the manuscript
 iterations <- 1000
 sample_size <- nrow(ExoMeth_Cohort)
 
@@ -652,7 +685,7 @@ proportions <- list(
 DCA_Resamples <- map(DCA_Data, function(df) {
   # ensure each comparator has the same resamples:
   set.seed(2903)
-  lapply(seq_len(iterations), function(x) {
+  map(seq_len(iterations), function(x) {
     splitstackshape::stratified(
       indt = df,
       group = "GleasonFactor",
@@ -995,101 +1028,22 @@ ggsave(
 # Supplementary Material
 
 ```{r SuppBoruta ClinVars}
-
-ggplot(FeatureImportances$SoC, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
-  geom_boxplot(outlier.alpha = 0.5) +
-  theme_pubclean() +
-  theme(
-    legend.position = "bottom",
-    axis.text.y = element_text(
-      face = case_when(
-        levels(reorder(FeatureImportances$SoC$Variable, 
-                       FeatureImportances$SoC$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(FeatureImportances$SoC$Variable, 
-                       FeatureImportances$SoC$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(FeatureImportances$SoC$Variable, 
-                       FeatureImportances$SoC$Importance)) %in% ClinVars ~ "bold.italic",
-        TRUE ~ "plain"
-      )
-    )
-  ) +
-  guides(fill = guide_legend(
-    title = 'Proportion of resamples "Confirmed":',
-    title.position = "top",
-    title.hjust = 0.5
-  )) +
-  labs(
-    x = NULL,
-    y = "Normalised permutation importance"
-  ) +
-  coord_flip() +
+SuppBorutaPlots$SoC +
   scale_fill_manual(values = c(D3Blue, D3Red, D3Purp))
 ```
  
  **Supplementary Figure 1.** *Boruta analysis of variables available for the training of the SoC model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Variable origins are denoted by font; clinical variables are italicised and emboldened. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for training predictive models.*
  
 ```{r SuppBoruta_MethyVars}
-ggplot(FeatureImportances$Methylation, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
-  geom_boxplot(outlier.alpha = 0.5) +
-  theme_pubclean() +
-  theme(
-    legend.position = "bottom",
-    axis.text.y = element_text(
-      face = case_when(
-        levels(reorder(FeatureImportances$Methylation$Variable, 
-                       FeatureImportances$Methylation$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(FeatureImportances$Methylation$Variable, 
-                       FeatureImportances$Methylation$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(FeatureImportances$Methylation$Variable, 
-                       FeatureImportances$Methylation$Importance)) %in% ClinVars ~ "bold.italic",
-        TRUE ~ "plain"
-      )
-    )
-  ) +
-  guides(fill = guide_legend(
-    title = 'Proportion of resamples "Confirmed":',
-    title.position = "top",
-    title.hjust = 0.5
-  )) +
-  labs(
-    x = NULL,
-    y = "Normalised permutation importance"
-  ) +
-  coord_flip() +
+SuppBorutaPlots$Methylation +
   scale_fill_manual(values = c(D3Red, D3Purp))
 ```
  
   **Supplementary Figure 2.** *Boruta analysis of variables available for the training of the Methylation model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Variable origins are denoted by font; methylation variables are italicised. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for training predictive models.*
  
-```{r SuppBoruta_NanoVars, fig.height=16, fig.width=7}
+```{r SuppBoruta ExoRNA, fig.height=16, fig.width=7}
 # Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-ggplot(FeatureImportances$ExoRNA, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
-  geom_boxplot(outlier.alpha = 0.5) +
-  theme_pubclean() +
-  theme(
-    legend.position = "bottom",
-    axis.text.y = element_text(
-      face = case_when(
-        levels(reorder(FeatureImportances$ExoRNA$Variable, 
-                       FeatureImportances$ExoRNA$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(FeatureImportances$ExoRNA$Variable, 
-                       FeatureImportances$ExoRNA$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(FeatureImportances$ExoRNA$Variable, 
-                       FeatureImportances$ExoRNA$Importance)) %in% ClinVars ~ "bold.italic",
-        TRUE ~ "plain"
-      )
-    )
-  ) +
-  guides(fill = guide_legend(
-    title = 'Proportion of resamples "Confirmed":',
-    title.position = "top",
-    title.hjust = 0.5
-  )) +
-  labs(
-    x = NULL,
-    y = "Normalised permutation importance"
-  ) +
-  coord_flip() +
+SuppBorutaPlots$ExoRNA +
   scale_fill_d3()
 ```
 
@@ -1161,7 +1115,6 @@ AllVars <- list(
   EpiPUR = c(ClinVars, MethProbes, NanoGenes)
 )
 
-
 AllFeatures <- map_dfc(AllVars, function(variables) {
   append(
     variables,
@@ -1188,6 +1141,7 @@ AllFeatures <- map_dfc(AllVars, function(variables) {
       )
     )
   )
+#Print table:
 format_table(AllFeatures, format = "markdown")
 ```
 
