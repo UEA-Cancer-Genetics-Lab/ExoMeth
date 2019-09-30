@@ -1,0 +1,41 @@
+Type: Compendium
+Package: The Framework: ExoMeth
+Title: What the Package Does (One Line, Title Case)
+Version: 0.0.1
+Authors@R: 
+    person(given = "Shea",
+           family = "Connell",
+           role = c("aut", "cre"),
+           email = "sheaconnell@gmail.com",
+           comment = c(ORCID = "0000-0002-2850-3908"))
+Description: This contains all of the data and code
+    neccessary to reproduce the ExoMeth manuscript analyses, figures and
+    the majority of the formatted manuscript
+License: MIT + file LICENSE
+Depends: 
+    Boruta,
+    cowplot,
+    dabestr,
+    dplyr,
+    formattable,
+    furrr,
+    ggpubr,
+    ggsci,
+    here,
+    knitr,
+    magrittr,
+    MASS,
+    pROC,
+    qwraps2,
+    randomForest,
+    rmarkdown,
+    rmda,
+    rsample,
+    splitstackshape,
+    tidymodels,
+    tidyverse,
+    yardstick
+Remotes: 
+    tidymodels/tidymodels
+Encoding: UTF-8
+LazyData: true
