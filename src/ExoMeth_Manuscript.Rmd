@@ -119,25 +119,16 @@ set.seed(2903)
 # For ease of computation the resampled Boruta has been precomputetd for you using the UEA HPC. However, if you wish
 # to recompute, or would like to tweak the analyses you can uncomment the below line to run the code. Additionally
 # it's possible to run the script in isolation as it calls all the data itself.
-# source(here("src/HPC_Boruta.R"))
+# source(here("src/Boruta_Computation.R"))
 
-# Load in the pre-computed Boruta resamples for analysis:
-ResampledBoruta <- readRDS(here::here("output/data_out/ResampledBoruta.RDS"))
+# The pre-computed Boruta resamples can be loaded in for analysis here:
+### WARNING: THIS WILL CRASH A BINDER INSTANCE AS IT IS LARGER THAN THE ALLOWED MEMORY (1 to 2 GB)! ###
+# ResampledBoruta <- readRDS(here("output/data_out/ResampledBoruta.RDS"))
 
-# Extract the important variables for each set of input variables and produce a list for later use:
-ConfirmedVariables <- map(
-  # Loop through each resample of the Boruta runs
-  ResampledBoruta, function(Single_Boruta) {
-    Single_Boruta %>%
-      # Filter only "confirmed" variables
-      filter(FinalDecision == "Confirmed") %>%
-      # Select only the variables and make a distinct list of them
-      select(Variable) %>%
-      distinct() %>%
-      as_vector()
-  }
-) %>%
-  set_names(c("SoC", "Methylation", "ExoRNA", "ExoMeth"))
+# Instead we load the pre-processed Feature Importances and and confirmed variable objects to save memory 
+# and for ease of working.
+ConfirmedVariables <- readRDS(here("output/data_out/ConfirmedVariables.RDS"))
+FeatureImportances <- readRDS(here("output/data_out/FeatureImportances.RDS"))
 ```
 
 #### Comparator Models 
@@ -250,39 +241,8 @@ ExoMeth_Cohort %>%
 ```{r Boruta}
 # Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
 
-ExoMeth_Features <- ResampledBoruta$ExoMeth %>%
-  filter(Importance != -Inf) %>%
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
-  mutate(
-    Variable = str_remove(Variable, "^m"),
-    # Bind the proportions so that they can be filled in nicely on a plot:
-    Proportion = case_when(
-      Proportion <= 0.05 ~ "<5%",
-      Proportion <= 0.25 ~ "5 - 25%",
-      Proportion <= 0.50 ~ "25 - 50%",
-      Proportion <= 0.75 ~ "50 - 75%",
-      Proportion <= 0.90 ~ "75 - 90%",
-      Proportion >= 0.90 ~ ">90%"
-    ),
-    # Mutate the Shadow feature strings to look nice:
-    Proportion = if_else(str_detect(Variable, "shadow"),
-      "Shadow Feature",
-      Proportion
-    ),
-    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-    # Make sure Proportion is an ordered factor.
-    Proportion = factor(Proportion,
-      levels = c(
-        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-        "Shadow Feature"
-      ),
-      ordered = TRUE
-    )
-  )
 # ExoMeth_Features is used multiple times below so the plot here is done in two parts.
-BorutaPlotData <- ExoMeth_Features %>%
+BorutaPlotData <- FeatureImportances$ExoMeth %>%
   # Add a flag to the methylation/clinical variables
   mutate(
     Variable = case_when(
@@ -294,13 +254,10 @@ BorutaPlotData <- ExoMeth_Features %>%
   )
 
 # Can now produce the Boruta plot:
-BorutaPlot <- ggplot(
-  BorutaPlotData,
-  aes(
-    x = reorder(Variable, Importance),
-    y = Importance, fill = as.factor(Proportion)
-  )
-) +
+BorutaPlot <- ggplot(BorutaPlotData, 
+                     aes(x = reorder(Variable, Importance),
+                         y = Importance, 
+                         fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
   theme(
@@ -311,11 +268,12 @@ BorutaPlot <- ggplot(
       "plain", "italic"
     ))
   ) +
-  guides(fill = guide_legend(
-    title = 'Proportion of resamples "Confirmed":',
-    title.position = "top",
-    title.hjust = 0.5
-  )) +
+  guides(
+    fill = guide_legend(
+      title = 'Proportion of resamples "Confirmed":',
+      title.position = "top",
+      title.hjust = 0.5
+    )) +
   labs(
     x = NULL,
     y = "Normalised permutation importance"
@@ -1036,91 +994,21 @@ ggsave(
 #####
 # Supplementary Material
 
-
-```{r Supplementary Boruta, fig.height=20, fig.width=8, include=FALSE}
-# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-ExoMeth_Features <- ResampledBoruta$ExoMeth %>%
-  filter(Importance != -Inf) %>%
-  mutate(
-    Variable = str_remove(Variable, "^m"),
-    Proportion = case_when(
-      Proportion <= 0.05 ~ "<5%",
-      Proportion <= 0.25 ~ "5 - 25%",
-      Proportion <= 0.50 ~ "25 - 50%",
-      Proportion <= 0.75 ~ "50 - 75%",
-      Proportion <= 0.90 ~ "75 - 90%",
-      Proportion >= 0.90 ~ ">90%"
-    ),
-    Proportion = if_else(str_detect(Variable, "shadow"),
-      "Shadow Feature",
-      Proportion
-    )
-  )
-
-SupplementaryBoruta <- ggplot(ExoMeth_Features, aes(x = reorder(Variable, Importance), y = Importance, fill = FinalDecision)) +
-  geom_boxplot() +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    axis.text.y = element_text(
-      face = case_when(
-        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(ExoMeth_Features$Variable, ExoMeth_Features$Importance)) %in% ClinVars ~ "bold.italic",
-        TRUE ~ "plain"
-      )
-    )
-  ) +
-  labs(
-    x = NULL,
-    subtitle = "Boruta-derived importance of available variables in predicting TriSig outcome",
-    fill = "Final Decision:"
-  ) +
-  coord_flip() +
-  scale_fill_d3(labels = c("Confirmed", "Rejected", "Shadow"))
-```
- 
 ```{r SuppBoruta ClinVars}
-# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Clin_Imps <- ResampledBoruta$SoC %>%
-  filter(Importance != -Inf) %>%
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
-  mutate(
-    Variable = str_remove(Variable, "^m"),
-    Proportion = case_when(
-      Proportion <= 0.05 ~ "<5%",
-      Proportion <= 0.25 ~ "5 - 25%",
-      Proportion <= 0.50 ~ "25 - 50%",
-      Proportion <= 0.75 ~ "50 - 75%",
-      Proportion <= 0.90 ~ "75 - 90%",
-      Proportion >= 0.90 ~ ">90%"
-    ),
-    Proportion = if_else(str_detect(Variable, "shadow"),
-      "Shadow Feature",
-      Proportion
-    ),
-    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-    Proportion = factor(Proportion,
-      levels = c(
-        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-        "Shadow Feature"
-      ),
-      ordered = TRUE
-    )
-  )
 
-ggplot(Clin_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
+ggplot(FeatureImportances$SoC, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
   theme(
     legend.position = "bottom",
     axis.text.y = element_text(
       face = case_when(
-        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(Clin_Imps$Variable, Clin_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        levels(reorder(FeatureImportances$SoC$Variable, 
+                       FeatureImportances$SoC$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(FeatureImportances$SoC$Variable, 
+                       FeatureImportances$SoC$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(FeatureImportances$SoC$Variable, 
+                       FeatureImportances$SoC$Importance)) %in% ClinVars ~ "bold.italic",
         TRUE ~ "plain"
       )
     )
@@ -1141,46 +1029,19 @@ ggplot(Clin_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = 
  **Supplementary Figure 1.** *Boruta analysis of variables available for the training of the SoC model. Variable importance was determined over 1,000 bootstrap resamples of the available data and the decision reached recorded at each resample. Variable origins are denoted by font; clinical variables are italicised and emboldened. Colour indicates the proportion of the 1,000 resamples a variable was confirmed to be important in. Variables confirmed in at least 90% of resamples were selected for training predictive models.*
  
 ```{r SuppBoruta_MethyVars}
-# Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Meth_Imps <- ResampledBoruta$Methylation %>%
-  filter(Importance != -Inf) %>%
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
-  mutate(
-    Variable = str_remove(Variable, "^m"),
-    Proportion = case_when(
-      Proportion <= 0.05 ~ "<5%",
-      Proportion <= 0.25 ~ "5 - 25%",
-      Proportion <= 0.50 ~ "25 - 50%",
-      Proportion <= 0.75 ~ "50 - 75%",
-      Proportion <= 0.90 ~ "75 - 90%",
-      Proportion >= 0.90 ~ ">90%"
-    ),
-    Proportion = if_else(str_detect(Variable, "shadow"),
-      "Shadow Feature",
-      Proportion
-    ),
-    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-    Proportion = factor(Proportion,
-      levels = c(
-        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-        "Shadow Feature"
-      ),
-      ordered = TRUE
-    )
-  )
-
-ggplot(Meth_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
+ggplot(FeatureImportances$Methylation, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
   theme(
     legend.position = "bottom",
     axis.text.y = element_text(
       face = case_when(
-        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% NanoGenes ~ "bold",
-        levels(reorder(Meth_Imps$Variable, Meth_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        levels(reorder(FeatureImportances$Methylation$Variable, 
+                       FeatureImportances$Methylation$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(FeatureImportances$Methylation$Variable, 
+                       FeatureImportances$Methylation$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(FeatureImportances$Methylation$Variable, 
+                       FeatureImportances$Methylation$Importance)) %in% ClinVars ~ "bold.italic",
         TRUE ~ "plain"
       )
     )
@@ -1202,46 +1063,19 @@ ggplot(Meth_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = 
  
 ```{r SuppBoruta_NanoVars, fig.height=16, fig.width=7}
 # Instead of calling the built-in plot function, spend way too much effort making it prettier through ggplot:
-Nano_Imps <- ResampledBoruta$ExoRNA %>%
-  filter(Importance != -Inf) %>%
-  filter(Decision %in% c("Confirmed", "Tentative", NA)) %>%
-  mutate(
-    Variable = str_remove(Variable, "^m"),
-    Proportion = case_when(
-      Proportion <= 0.05 ~ "<5%",
-      Proportion <= 0.25 ~ "5 - 25%",
-      Proportion <= 0.50 ~ "25 - 50%",
-      Proportion <= 0.75 ~ "50 - 75%",
-      Proportion <= 0.90 ~ "75 - 90%",
-      Proportion >= 0.90 ~ ">90%"
-    ),
-    Proportion = if_else(str_detect(Variable, "shadow"),
-      "Shadow Feature",
-      Proportion
-    ),
-    Variable = str_replace(Variable, "shadowMax", "Shadow Maximum"),
-    Variable = str_replace(Variable, "shadowMin", "Shadow Minimum"),
-    Variable = str_replace(Variable, "shadowMean", "Shadow Mean"),
-    Variable = str_replace(Variable, "ERG3", "ERG"),
-    Proportion = factor(Proportion,
-      levels = c(
-        "<5%", "5 - 25%", "25 - 50%", "50 - 75%", "75 - 90%", ">90%",
-        "Shadow Feature"
-      ),
-      ordered = TRUE
-    )
-  )
-
-ggplot(Nano_Imps, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
+ggplot(FeatureImportances$ExoRNA, aes(x = reorder(Variable, Importance), y = Importance, fill = as.factor(Proportion))) +
   geom_boxplot(outlier.alpha = 0.5) +
   theme_pubclean() +
   theme(
     legend.position = "bottom",
     axis.text.y = element_text(
       face = case_when(
-        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
-        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% c(NanoGenes, "ERG exons 4-5", "ERG exons 6-7") ~ "bold",
-        levels(reorder(Nano_Imps$Variable, Nano_Imps$Importance)) %in% ClinVars ~ "bold.italic",
+        levels(reorder(FeatureImportances$ExoRNA$Variable, 
+                       FeatureImportances$ExoRNA$Importance)) %in% str_remove(MethProbes, "^m") ~ "italic",
+        levels(reorder(FeatureImportances$ExoRNA$Variable, 
+                       FeatureImportances$ExoRNA$Importance)) %in% NanoGenes ~ "bold",
+        levels(reorder(FeatureImportances$ExoRNA$Variable, 
+                       FeatureImportances$ExoRNA$Importance)) %in% ClinVars ~ "bold.italic",
         TRUE ~ "plain"
       )
     )
