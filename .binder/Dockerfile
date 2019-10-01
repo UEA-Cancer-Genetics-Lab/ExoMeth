@@ -7,6 +7,6 @@ USER ${NB_USER}
 
 
 
-RUN wget https://github.com/Shedimus/ExoMeth/raw/master/DESCRIPTION && R -e "options(repos = list(CRAN = 'http://mran.revolutionanalytics.com/snapshot/2019-09-30/')); devtools::install_deps()"
+RUN wget https://github.com/UEA-Cancer-Genetics-Lab/ExoMeth/raw/master/DESCRIPTION && R -e "options(repos = list(CRAN = 'http://mran.revolutionanalytics.com/snapshot/2019-09-30/')); devtools::install_deps()"
 
 RUN rm DESCRIPTION.1; exit 0
